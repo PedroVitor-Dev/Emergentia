@@ -4,8 +4,8 @@ import { createRandomDna } from '../genetics/dna';
 import { getSpeciesColor, getSpeciesName } from './names';
 
 export const createWorld = (): World => ({
-  width: 2000,
-  height: 2000,
+  width: 3200,
+  height: 3200,
   day: 1,
   tick: 0,
   temperature: 0.62,

@@ -6,13 +6,13 @@ const maxVisibleCreatures = 160;
 const maxVisibleFood = 640;
 const maxVisibleBases = 12;
 const maxVisibleLandPatches = 32;
-const cameraMoveSpeed = 170;
+const cameraMoveSpeed = 240;
 const cameraMinHeight = 32;
-const cameraMaxHeight = 260;
-const cameraViewDistance = 620;
-const mapMinZoom = 0.55;
-const mapMaxZoom = 3.6;
-const mapViewDistance = 1100;
+const cameraMaxHeight = 380;
+const cameraViewDistance = 940;
+const mapMinZoom = 0.34;
+const mapMaxZoom = 4.2;
+const mapViewDistance = 1800;
 
 export type CameraMode = 'spectator' | 'map';
 
@@ -46,10 +46,16 @@ type BaseRig = {
   floor: THREE.Mesh;
   hut: THREE.Mesh;
   roof: THREE.Mesh;
+  centralTower: THREE.Mesh;
+  centralRoof: THREE.Mesh;
   leftTower: THREE.Mesh;
   rightTower: THREE.Mesh;
+  wallSegments: THREE.InstancedMesh;
   battlements: THREE.InstancedMesh;
   gate: THREE.Mesh;
+  flagPole: THREE.Mesh;
+  flag: THREE.Mesh;
+  torchFlames: THREE.InstancedMesh;
   beacon: THREE.Mesh;
 };
 
@@ -167,7 +173,7 @@ export class ThreeWorldRenderer {
   private updateCamera() {
     if (this.cameraMode === 'map') {
       const aspect = this.width / this.height;
-      const halfHeight = 720 / this.mapZoom / 2;
+      const halfHeight = 1040 / this.mapZoom / 2;
       const halfWidth = halfHeight * aspect;
 
       this.mapCamera.left = -halfWidth;
@@ -283,7 +289,7 @@ export class ThreeWorldRenderer {
       }
 
       direction.normalize();
-      const movement = (520 * deltaSeconds) / this.mapZoom;
+      const movement = (780 * deltaSeconds) / this.mapZoom;
       this.mapTarget.x += direction.x * movement;
       this.mapTarget.z += direction.y * movement;
       this.clampMapToWorld(world);
@@ -313,8 +319,8 @@ export class ThreeWorldRenderer {
   private clampSpectatorToWorld(world: World) {
     const worldHalfWidth = (world.width * worldScale) / 2;
     const worldHalfHeight = (world.height * worldScale) / 2;
-    const horizontalLimit = worldHalfWidth * 0.88;
-    const verticalLimit = worldHalfHeight * 0.88;
+    const horizontalLimit = worldHalfWidth * 0.96;
+    const verticalLimit = worldHalfHeight * 0.96;
 
     this.spectatorPosition.x = THREE.MathUtils.clamp(this.spectatorPosition.x, -horizontalLimit, horizontalLimit);
     this.spectatorPosition.z = THREE.MathUtils.clamp(this.spectatorPosition.z, -verticalLimit, verticalLimit);
@@ -325,10 +331,10 @@ export class ThreeWorldRenderer {
     const worldHalfWidth = (world.width * worldScale) / 2;
     const worldHalfHeight = (world.height * worldScale) / 2;
     const aspect = this.width / this.height;
-    const halfViewHeight = 720 / this.mapZoom / 2;
+    const halfViewHeight = 1040 / this.mapZoom / 2;
     const halfViewWidth = halfViewHeight * aspect;
-    const horizontalLimit = Math.max(0, worldHalfWidth - halfViewWidth * 0.45);
-    const verticalLimit = Math.max(0, worldHalfHeight - halfViewHeight * 0.45);
+    const horizontalLimit = Math.max(0, worldHalfWidth - halfViewWidth * 0.2);
+    const verticalLimit = Math.max(0, worldHalfHeight - halfViewHeight * 0.2);
 
     this.mapTarget.x = THREE.MathUtils.clamp(this.mapTarget.x, -horizontalLimit, horizontalLimit);
     this.mapTarget.z = THREE.MathUtils.clamp(this.mapTarget.z, -verticalLimit, verticalLimit);
@@ -344,7 +350,7 @@ export class ThreeWorldRenderer {
 
   private createWorldStage() {
     const ocean = new THREE.Mesh(
-      new THREE.PlaneGeometry(1900, 1900, 1, 1),
+      new THREE.PlaneGeometry(3100, 3100, 1, 1),
       new THREE.MeshBasicMaterial({ color: '#0b2e35' }),
     );
     ocean.name = 'ocean-plane';
@@ -353,12 +359,12 @@ export class ThreeWorldRenderer {
     this.scene.add(ocean);
 
     const beach = new THREE.Mesh(
-      new THREE.CircleGeometry(660, 80),
+      new THREE.CircleGeometry(1120, 96),
       new THREE.MeshStandardMaterial({ color: '#7d6c43', roughness: 0.98, metalness: 0 }),
     );
     beach.name = 'island-beach';
     beach.rotation.x = -Math.PI / 2;
-    beach.scale.set(1.05, 0.86, 1);
+    beach.scale.set(1.08, 0.9, 1);
     beach.position.y = -0.06;
     this.scene.add(beach);
 
@@ -367,13 +373,13 @@ export class ThreeWorldRenderer {
       roughness: 0.95,
       metalness: 0.02,
     });
-    const terrain = new THREE.Mesh(new THREE.CircleGeometry(560, 96), terrainMaterial);
+    const terrain = new THREE.Mesh(new THREE.CircleGeometry(970, 128), terrainMaterial);
     terrain.name = 'living-terrain';
     terrain.rotation.x = -Math.PI / 2;
-    terrain.scale.set(1.03, 0.82, 1);
+    terrain.scale.set(1.05, 0.86, 1);
     this.scene.add(terrain);
 
-    const grid = new THREE.GridHelper(1120, 32, '#315039', '#1f3226');
+    const grid = new THREE.GridHelper(1900, 44, '#315039', '#1f3226');
     grid.position.y = 0.18;
     grid.visible = false;
     this.scene.add(grid);
@@ -389,7 +395,7 @@ export class ThreeWorldRenderer {
       patch.name = 'biome-patch';
       patch.rotation.x = -Math.PI / 2;
       patch.scale.set(1.8 + (index % 3) * 0.45, 0.65 + (index % 2) * 0.35, 1);
-      patch.position.set(((index * 137) % 920) - 460, 0.25, ((index * 229) % 920) - 460);
+      patch.position.set(((index * 227) % 1580) - 790, 0.25, ((index * 353) % 1480) - 740);
       this.scene.add(patch);
     }
 
@@ -398,7 +404,7 @@ export class ThreeWorldRenderer {
       const crown = new THREE.Mesh(new THREE.ConeGeometry(12 + (index % 3) * 3, 28, 7), this.getMaterial('#265c32'));
       const palm = new THREE.Group();
       const angle = index * 2.399;
-      const radius = 250 + (index % 9) * 36;
+      const radius = 430 + (index % 9) * 62;
       palm.name = 'palm';
       palm.position.set(Math.cos(angle) * radius, 10, Math.sin(angle) * radius * 0.78);
       palm.rotation.y = angle;
@@ -412,7 +418,7 @@ export class ThreeWorldRenderer {
 
     for (let index = 0; index < 22; index += 1) {
       const angle = index * 1.718;
-      const radius = 120 + (index % 8) * 46;
+      const radius = 190 + (index % 8) * 84;
       const rock = new THREE.Mesh(
         new THREE.DodecahedronGeometry(8 + (index % 4) * 3, 0),
         this.getMaterial(index % 2 === 0 ? '#706b5b' : '#544f46'),
@@ -430,7 +436,7 @@ export class ThreeWorldRenderer {
         this.getMaterial(index % 2 === 0 ? '#24472b' : '#2e542d'),
       );
       const angle = index * 2.071;
-      const radius = 90 + (index % 6) * 58;
+      const radius = 150 + (index % 6) * 98;
       mound.name = 'jungle-mound';
       mound.position.set(Math.cos(angle) * radius, 6, Math.sin(angle) * radius * 0.75);
       mound.rotation.y = angle;
@@ -445,11 +451,11 @@ export class ThreeWorldRenderer {
         opacity: 0.42,
         depthWrite: false,
       });
-      const vein = new THREE.Mesh(new THREE.PlaneGeometry(760, 9, 1, 1), material);
+      const vein = new THREE.Mesh(new THREE.PlaneGeometry(1320, 11, 1, 1), material);
       vein.name = 'water-vein';
       vein.rotation.x = -Math.PI / 2;
       vein.rotation.z = -0.28 + index * 0.15;
-      vein.position.set(-120 + index * 70, 0.35, -350 + index * 175);
+      vein.position.set(-220 + index * 120, 0.35, -610 + index * 300);
       this.scene.add(vein);
     }
   }
@@ -537,10 +543,23 @@ export class ThreeWorldRenderer {
       const floor = new THREE.Mesh(new THREE.CylinderGeometry(44, 54, 6, 16), this.getMaterial('#6d665b'));
       const hut = new THREE.Mesh(new THREE.BoxGeometry(52, 34, 42), this.getMaterial('#7b7469'));
       const roof = new THREE.Mesh(new THREE.ConeGeometry(38, 24, 4), this.getMaterial('#2a1a12'));
+      const centralTower = new THREE.Mesh(new THREE.CylinderGeometry(13, 17, 74, 10), this.getMaterial('#8a8174'));
+      const centralRoof = new THREE.Mesh(new THREE.ConeGeometry(20, 24, 6), this.getMaterial('#2a1a12'));
       const leftTower = new THREE.Mesh(new THREE.CylinderGeometry(10, 13, 54, 8), this.getMaterial('#8a8174'));
       const rightTower = leftTower.clone();
+      const wallSegments = new THREE.InstancedMesh(new THREE.BoxGeometry(18, 13, 8), this.getMaterial('#766d61'), 18);
       const battlements = new THREE.InstancedMesh(new THREE.BoxGeometry(5.5, 5, 5), this.getMaterial('#7b654b'), 8);
       const gate = new THREE.Mesh(new THREE.BoxGeometry(11, 15, 3), this.getMaterial('#21140d'));
+      const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 42, 6), this.getMaterial('#2c1b12'));
+      const flag = new THREE.Mesh(
+        new THREE.PlaneGeometry(20, 12, 1, 1),
+        new THREE.MeshBasicMaterial({ color: '#f8d56b', side: THREE.DoubleSide }),
+      );
+      const torchFlames = new THREE.InstancedMesh(
+        new THREE.SphereGeometry(2.8, 8, 8),
+        new THREE.MeshBasicMaterial({ color: '#ff9a3d', transparent: true, opacity: 0.86 }),
+        6,
+      );
       const beacon = new THREE.Mesh(
         new THREE.SphereGeometry(4.2, 8, 8),
         new THREE.MeshBasicMaterial({ color: '#f8d56b', transparent: true, opacity: 0.72 }),
@@ -550,19 +569,76 @@ export class ThreeWorldRenderer {
       hut.position.y = 23;
       roof.position.y = 53;
       roof.rotation.y = Math.PI * 0.25;
+      centralTower.position.set(0, 41, 10);
+      centralRoof.position.set(0, 90, 10);
       leftTower.position.set(-33, 30, -2);
       rightTower.position.set(33, 30, -2);
       gate.position.set(0, 14, -22.8);
+      flagPole.position.set(0, 102, 10);
+      flag.position.set(10.4, 111, 10);
+      flag.rotation.y = Math.PI * 0.5;
       beacon.position.y = 72;
+      for (let segment = 0; segment < 18; segment += 1) {
+        const angle = (segment / 18) * Math.PI * 2;
+        const radius = 70;
+        this.reusableMatrix.compose(
+          new THREE.Vector3(Math.cos(angle) * radius, 8.5, Math.sin(angle) * radius),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -angle, 0)),
+          new THREE.Vector3(1, 1, 1),
+        );
+        wallSegments.setMatrixAt(segment, this.reusableMatrix);
+      }
       for (let block = 0; block < 8; block += 1) {
         const x = -34 + block * 9.7;
         this.reusableMatrix.compose(new THREE.Vector3(x, 42, -22), new THREE.Quaternion(), new THREE.Vector3(1.15, 1.15, 1.15));
         battlements.setMatrixAt(block, this.reusableMatrix);
       }
+      for (let torch = 0; torch < 6; torch += 1) {
+        const angle = (torch / 6) * Math.PI * 2 + 0.35;
+        this.reusableMatrix.compose(
+          new THREE.Vector3(Math.cos(angle) * 52, 20, Math.sin(angle) * 52),
+          new THREE.Quaternion(),
+          new THREE.Vector3(1, 1.25, 1),
+        );
+        torchFlames.setMatrixAt(torch, this.reusableMatrix);
+      }
+      wallSegments.instanceMatrix.needsUpdate = true;
       battlements.instanceMatrix.needsUpdate = true;
+      torchFlames.instanceMatrix.needsUpdate = true;
       root.visible = false;
-      root.add(floor, hut, roof, leftTower, rightTower, battlements, gate, beacon);
-      this.basePool.push({ root, floor, hut, roof, leftTower, rightTower, battlements, gate, beacon });
+      root.add(
+        floor,
+        hut,
+        roof,
+        centralTower,
+        centralRoof,
+        leftTower,
+        rightTower,
+        wallSegments,
+        battlements,
+        gate,
+        flagPole,
+        flag,
+        torchFlames,
+        beacon,
+      );
+      this.basePool.push({
+        root,
+        floor,
+        hut,
+        roof,
+        centralTower,
+        centralRoof,
+        leftTower,
+        rightTower,
+        wallSegments,
+        battlements,
+        gate,
+        flagPole,
+        flag,
+        torchFlames,
+        beacon,
+      });
       this.scene.add(root);
     }
   }
@@ -725,7 +801,10 @@ export class ThreeWorldRenderer {
     const position = this.toScenePosition(base.position.x, base.position.y, snapshot.world);
     const speciesColor = snapshot.species.find((species) => species.id === base.speciesId)?.color ?? '#f8d56b';
     const pulse = 1 + Math.sin(snapshot.world.tick * 0.06 + base.id) * 0.04;
-    const progressScale = 0.72 + Math.min(0.42, base.buildProgress / 220);
+    const foodLevel = Math.min(1, base.foodStock / 180);
+    const populationLevel = Math.min(1, base.population / 48);
+    const castleLevel = Math.max(foodLevel, populationLevel, Math.min(1, base.expansionLevel / 8));
+    const progressScale = 0.82 + Math.min(0.3, base.buildProgress / 260) + castleLevel * 0.28;
 
     rig.root.visible = true;
     rig.root.position.set(position.x, 1.4, position.z);
@@ -733,11 +812,21 @@ export class ThreeWorldRenderer {
     rig.root.scale.setScalar(progressScale * pulse * 1.34);
     (rig.floor.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#6d665b'), 0.5);
     (rig.hut.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#7b7469'), 0.55);
+    (rig.centralTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.54);
     (rig.leftTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.62);
     (rig.rightTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.62);
+    (rig.flag.material as THREE.MeshBasicMaterial).color.set(speciesColor);
+    (rig.wallSegments.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#766d61'), 0.68);
     (rig.gate.material as THREE.MeshStandardMaterial).color.set(base.threatLevel > 0 ? '#120909' : '#21140d');
     (rig.beacon.material as THREE.MeshBasicMaterial).color.set(speciesColor);
-    (rig.beacon.material as THREE.MeshBasicMaterial).opacity = 0.5 + Math.min(0.35, base.population * 0.025);
+    (rig.beacon.material as THREE.MeshBasicMaterial).opacity = 0.48 + Math.min(0.4, base.population * 0.018 + foodLevel * 0.18);
+    (rig.torchFlames.material as THREE.MeshBasicMaterial).opacity = 0.58 + Math.sin(snapshot.world.tick * 0.12 + base.id) * 0.18 + castleLevel * 0.12;
+    rig.centralTower.scale.y = 0.82 + castleLevel * 0.4;
+    rig.centralRoof.position.y = 84 + castleLevel * 18;
+    rig.flagPole.position.y = 98 + castleLevel * 20;
+    rig.flag.position.y = 107 + castleLevel * 20;
+    rig.flag.scale.set(0.92 + populationLevel * 0.42, 0.86 + foodLevel * 0.32, 1);
+    rig.beacon.position.y = 70 + castleLevel * 24;
   }
 
   private updateCreatures(snapshot: SimulationSnapshot) {

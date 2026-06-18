@@ -20,7 +20,7 @@ import { createAgent, createFood, createInitialSpecies, createWorld } from './cr
 import { getSpeciesColor, getSpeciesName } from './names';
 
 const initialAgents = 50;
-const initialFood = 280;
+const initialFood = 440;
 const dayLength = 58;
 const maxTimelineEvents = 24;
 const maxDiplomaticMessages = 18;

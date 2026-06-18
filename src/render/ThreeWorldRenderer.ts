@@ -29,6 +29,8 @@ type CreatureRig = {
   rightArm: THREE.Mesh;
   hammerHandle: THREE.Mesh;
   hammerHead: THREE.Mesh;
+  carryApple: THREE.Mesh;
+  carryStem: THREE.Mesh;
 };
 
 type EffectRig = {
@@ -588,11 +590,30 @@ export class ThreeWorldRenderer {
     const rightArm = leftArm.clone();
     const hammerHandle = new THREE.Mesh(new THREE.BoxGeometry(1.1, 13, 1.1), this.getMaterial('#4a2d1b'));
     const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(6, 2.6, 2.8), this.getMaterial('#4c4c46'));
+    const carryApple = new THREE.Mesh(new THREE.SphereGeometry(3.2, 8, 8), this.getMaterial('#d82635'));
+    const carryStem = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 2.6, 5), this.getMaterial('#3a2417'));
 
     hammerHandle.visible = false;
     hammerHead.visible = false;
-    root.add(body, leftEye, rightEye, mouth, teeth, leftLeg, rightLeg, leftArm, rightArm, hammerHandle, hammerHead);
-    return { root, body, leftEye, rightEye, mouth, teeth, leftLeg, rightLeg, leftArm, rightArm, hammerHandle, hammerHead };
+    carryApple.visible = false;
+    carryStem.visible = false;
+    root.add(body, leftEye, rightEye, mouth, teeth, leftLeg, rightLeg, leftArm, rightArm, hammerHandle, hammerHead, carryApple, carryStem);
+    return {
+      root,
+      body,
+      leftEye,
+      rightEye,
+      mouth,
+      teeth,
+      leftLeg,
+      rightLeg,
+      leftArm,
+      rightArm,
+      hammerHandle,
+      hammerHead,
+      carryApple,
+      carryStem,
+    };
   }
 
   private updateFood(snapshot: SimulationSnapshot) {
@@ -779,6 +800,12 @@ export class ThreeWorldRenderer {
     rig.hammerHandle.rotation.x = 0.22;
     rig.hammerHead.position.set(17.8 + hammerSwing * 2.4, 1.5 - Math.abs(hammerSwing) * 2.8, -5.2);
     rig.hammerHead.rotation.z = rig.hammerHandle.rotation.z + Math.PI * 0.5;
+    rig.carryApple.visible = agent.carryingFood > 0 && !isBuilding;
+    rig.carryStem.visible = agent.carryingFood > 0 && !isBuilding;
+    rig.carryApple.position.set(-14, 5.5 + gait * 1.4, -6.4);
+    rig.carryApple.scale.setScalar(0.78 + Math.min(0.45, agent.carryingFood / 60));
+    rig.carryStem.position.set(-13.2, 9 + gait * 1.4, -6.4);
+    rig.carryStem.rotation.z = 0.32;
 
     const teethCount = 3 + Math.round(agent.dna.aggression * 3);
     for (let index = 0; index < 6; index += 1) {
@@ -819,7 +846,13 @@ export class ThreeWorldRenderer {
             ? '#86efac'
             : effect.type === 'build'
               ? '#f6b44b'
-              : '#f8d56b';
+              : effect.type === 'deposit'
+                ? '#e8f06a'
+                : effect.type === 'peace'
+                  ? '#8bd3ff'
+                  : effect.type === 'rally'
+                    ? '#f472b6'
+                    : '#f8d56b';
     const ringMaterial = rig.ring.material as THREE.MeshBasicMaterial;
     const coreMaterial = rig.core.material as THREE.MeshBasicMaterial;
     const scale =
@@ -829,6 +862,12 @@ export class ThreeWorldRenderer {
           ? 0.7 + progress * 1.4
           : effect.type === 'build'
             ? 0.8 + Math.sin(progress * Math.PI) * 1.8
+            : effect.type === 'deposit'
+              ? 0.6 + Math.sin(progress * Math.PI) * 2.2
+              : effect.type === 'peace'
+                ? 1 + Math.sin(progress * Math.PI) * 3.2
+                : effect.type === 'rally'
+                  ? 0.9 + progress * 3.6
           : effect.type === 'combat'
             ? 0.9 + Math.sin(progress * Math.PI) * 2.4
             : 1 + progress * 2.6;
@@ -844,8 +883,10 @@ export class ThreeWorldRenderer {
     rig.core.position.y =
       effect.type === 'death'
         ? progress * 18
-        : effect.type === 'combat' || effect.type === 'build'
+        : effect.type === 'combat' || effect.type === 'build' || effect.type === 'rally'
           ? 8 + Math.sin(progress * Math.PI) * 12
+          : effect.type === 'deposit' || effect.type === 'peace'
+            ? 4 + Math.sin(progress * Math.PI) * 7
           : progress * 8;
   }
 

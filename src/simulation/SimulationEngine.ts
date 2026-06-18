@@ -1,5 +1,6 @@
 import type {
   Agent,
+  AgentIntent,
   Base,
   Dna,
   Food,
@@ -28,6 +29,13 @@ const collisionRadius = 26;
 const combatRadius = 42;
 const maxBases = 8;
 const maxLandPatches = 28;
+const foodCarryThreshold = 48;
+const maxCarryFood = 32;
+
+type SpeciesRelation = {
+  tension: number;
+  truceUntil: number;
+};
 
 export class SimulationEngine {
   private world: World;
@@ -51,7 +59,11 @@ export class SimulationEngine {
   private firstCombatLogged = false;
   private firstBaseLogged = false;
   private firstExpansionLogged = false;
+  private firstDepositLogged = false;
+  private firstPeaceLogged = false;
+  private firstRallyLogged = false;
   private visualEffects: VisualEffect[] = [];
+  private relations = new Map<string, SpeciesRelation>();
 
   constructor() {
     this.world = createWorld();
@@ -103,7 +115,11 @@ export class SimulationEngine {
     this.firstCombatLogged = false;
     this.firstBaseLogged = false;
     this.firstExpansionLogged = false;
+    this.firstDepositLogged = false;
+    this.firstPeaceLogged = false;
+    this.firstRallyLogged = false;
     this.visualEffects = fresh.visualEffects;
+    this.relations = fresh.relations;
   }
 
   step(iterations = 1) {
@@ -113,6 +129,7 @@ export class SimulationEngine {
       if (this.world.tick % dayLength === 0) {
         this.world.day += 1;
         this.growFood();
+        this.coolDiplomacy();
         this.detectSpecies();
         this.logMilestones();
       }
@@ -151,12 +168,17 @@ export class SimulationEngine {
       const nearestAlly = this.findNearestAlly(agent);
       const nearestEnemy = this.findNearestEnemy(agent);
       const nearestBase = this.findNearestBase(agent);
+      const localAllies = this.countNearbyAgents(agent, true, 128);
+      const localEnemies = this.countNearbyAgents(agent, false, 128);
       const hunger = clamp((86 - agent.energy) / 86);
       const curiosity = agent.dna.curiosity - 0.5;
+      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, localAllies, localEnemies);
       const socialPull = nearestAlly && agent.energy > 34 ? agent.dna.social * 0.34 : 0;
-      const basePull = nearestBase && (agent.energy < 44 || agent.dna.social > 0.68) ? agent.dna.social * 0.46 : 0;
-      const enemyPull = nearestEnemy && agent.energy > 38 ? Math.max(0, agent.dna.aggression - 0.24) * 0.72 : 0;
-      const foodPull = nearestFood ? hunger * (0.82 + agent.dna.vision) : 0;
+      const basePull = nearestBase && ['deliver', 'shelter', 'defend', 'rally'].includes(intent) ? 0.82 + agent.dna.social * 0.52 : 0;
+      const enemyPull = nearestEnemy && (intent === 'attack' || intent === 'defend') ? Math.max(0.1, agent.dna.aggression - 0.18) * 0.9 : 0;
+      const enemyRepel = nearestEnemy && (intent === 'avoid' || intent === 'peace') ? 0.72 + (1 - agent.dna.aggression) * 0.35 : 0;
+      const foodPull = nearestFood && intent === 'forage' ? (0.72 + hunger) * (0.72 + agent.dna.vision) : 0;
+      agent.intent = intent;
       const wander = {
         x: Math.sin((this.world.tick + agent.id * 7) * 0.018) * curiosity,
         y: Math.cos((this.world.tick + agent.id * 11) * 0.016) * curiosity,
@@ -185,8 +207,8 @@ export class SimulationEngine {
           })
         : { x: 0, y: 0 };
       const direction = normalize({
-        x: toFood.x * foodPull + toAlly.x * socialPull + toEnemy.x * enemyPull + toBase.x * basePull + wander.x,
-        y: toFood.y * foodPull + toAlly.y * socialPull + toEnemy.y * enemyPull + toBase.y * basePull + wander.y,
+        x: toFood.x * foodPull + toAlly.x * socialPull + toEnemy.x * (enemyPull - enemyRepel) + toBase.x * basePull + wander.x,
+        y: toFood.y * foodPull + toAlly.y * socialPull + toEnemy.y * (enemyPull - enemyRepel) + toBase.y * basePull + wander.y,
       });
       const speed = 0.48 + agent.dna.speed * 1.18;
 
@@ -262,8 +284,22 @@ export class SimulationEngine {
       const foodItem = this.food.find((item) => !eaten.has(item.id) && distanceSquared(agent.position, item.position) < biteRadius ** 2);
 
       if (foodItem) {
+        const nearestBase = this.findNearestBase(agent);
+        const shouldCarryToBase =
+          nearestBase &&
+          agent.energy > foodCarryThreshold &&
+          agent.dna.social > 0.42 &&
+          agent.carryingFood < maxCarryFood &&
+          nearestBase.foodStock < Math.max(36, nearestBase.population * 12);
+
         eaten.add(foodItem.id);
-        agent.energy = Math.min(120, agent.energy + foodItem.energy);
+        if (shouldCarryToBase) {
+          agent.carryingFood = Math.min(maxCarryFood, agent.carryingFood + foodItem.energy);
+          agent.energy = Math.min(120, agent.energy + foodItem.energy * 0.18);
+          agent.intent = 'deliver';
+        } else {
+          agent.energy = Math.min(120, agent.energy + foodItem.energy);
+        }
         agent.memory = [foodItem.position, ...agent.memory].slice(0, 5);
         this.addVisualEffect('eat', foodItem.position, agent.speciesId);
       }
@@ -327,7 +363,12 @@ export class SimulationEngine {
     for (let index = 0; index < this.agents.length; index += 1) {
       const attacker = this.agents[index];
 
-      if (attacker.combatCooldown > 0 || attacker.energy < 22 || attacker.dna.aggression < 0.28) {
+      if (
+        attacker.combatCooldown > 0 ||
+        attacker.energy < 22 ||
+        attacker.dna.aggression < 0.28 ||
+        (!['attack', 'defend'].includes(attacker.intent) && attacker.dna.aggression < 0.72)
+      ) {
         continue;
       }
 
@@ -336,6 +377,7 @@ export class SimulationEngine {
           candidate.id !== attacker.id &&
           candidate.speciesId !== attacker.speciesId &&
           candidate.energy > 0 &&
+          !this.isTruceActive(attacker.speciesId, candidate.speciesId) &&
           distanceSquared(attacker.position, candidate.position) < combatRadius ** 2,
       );
 
@@ -350,6 +392,7 @@ export class SimulationEngine {
       target.combatCooldown = Math.max(target.combatCooldown, 24);
       attacker.facingAngle = Math.atan2(target.position.x - attacker.position.x, target.position.y - attacker.position.y);
       target.facingAngle = Math.atan2(attacker.position.x - target.position.x, attacker.position.y - target.position.y);
+      this.adjustTension(attacker.speciesId, target.speciesId, 2.6 + attacker.dna.aggression * 2.4);
       this.addVisualEffect('combat', {
         x: (attacker.position.x + target.position.x) / 2,
         y: (attacker.position.y + target.position.y) / 2,
@@ -363,8 +406,34 @@ export class SimulationEngine {
   }
 
   private resolveBases() {
+    this.resolveFoodDeposits();
     this.tryFoundBases();
     this.updateBases();
+  }
+
+  private resolveFoodDeposits() {
+    this.agents.forEach((agent) => {
+      if (agent.carryingFood <= 0) {
+        return;
+      }
+
+      const base = this.findNearestBase(agent);
+
+      if (!base || distanceSquared(agent.position, base.position) > (base.radius + 18) ** 2) {
+        return;
+      }
+
+      base.foodStock += agent.carryingFood;
+      agent.energy = Math.min(120, agent.energy + Math.min(10, agent.carryingFood * 0.24));
+      agent.carryingFood = 0;
+      agent.intent = 'shelter';
+      this.addVisualEffect('deposit', base.position, agent.speciesId);
+
+      if (!this.firstDepositLogged) {
+        this.firstDepositLogged = true;
+        this.addTimelineEvent('milestone', 'First food stockpile', `${this.getSpeciesLabel(agent.speciesId)} workers started carrying apples back to shelter.`);
+      }
+    });
   }
 
   private tryFoundBases() {
@@ -402,6 +471,8 @@ export class SimulationEngine {
         speciesId: founder.speciesId,
         radius: 92,
         population: cluster.length,
+        foodStock: 0,
+        threatLevel: 0,
         buildProgress: 22,
         expansionLevel: 0,
         bornDay: this.world.day,
@@ -425,16 +496,31 @@ export class SimulationEngine {
       const workers = this.agents.filter(
         (agent) => agent.speciesId === base.speciesId && distanceSquared(agent.position, base.position) < (base.radius + 56) ** 2,
       );
+      const nearbyEnemies = this.agents.filter(
+        (agent) => agent.speciesId !== base.speciesId && distanceSquared(agent.position, base.position) < (base.radius + 96) ** 2,
+      );
 
       base.population = workers.length;
+      base.threatLevel = nearbyEnemies.length;
 
       if (workers.length < 3) {
         base.buildProgress = Math.max(0, base.buildProgress - 0.015);
         return;
       }
 
+      workers
+        .filter((agent) => agent.energy < 42 && base.foodStock >= 6)
+        .slice(0, 3)
+        .forEach((agent) => {
+          const ration = Math.min(8, base.foodStock);
+          base.foodStock -= ration;
+          agent.energy = Math.min(120, agent.energy + ration * 1.25);
+        });
+
       const socialPower = workers.reduce((sum, agent) => sum + agent.dna.social, 0) / workers.length;
-      base.buildProgress += workers.length * socialPower * 0.055;
+      const storedFoodBoost = Math.min(1.6, base.foodStock / Math.max(30, workers.length * 12));
+      const defenseDrag = nearbyEnemies.length > workers.length ? 0.64 : 1;
+      base.buildProgress += workers.length * socialPower * (0.045 + storedFoodBoost * 0.024) * defenseDrag;
 
       if (this.world.tick % 18 === 0) {
         this.addVisualEffect('build', base.position, base.speciesId);
@@ -592,6 +678,154 @@ export class SimulationEngine {
     });
 
     return nearest;
+  }
+
+  private countNearbyAgents(agent: Agent, allies: boolean, radius: number) {
+    const radiusSquared = radius ** 2;
+    let count = 0;
+
+    this.agents.forEach((candidate) => {
+      if (candidate.id === agent.id) {
+        return;
+      }
+
+      const isAlly = candidate.speciesId === agent.speciesId;
+
+      if (isAlly !== allies) {
+        return;
+      }
+
+      if (distanceSquared(agent.position, candidate.position) < radiusSquared) {
+        count += 1;
+      }
+    });
+
+    return count;
+  }
+
+  private chooseIntent(
+    agent: Agent,
+    base: Base | null,
+    food: Food | null,
+    enemy: Agent | null,
+    localAllies: number,
+    localEnemies: number,
+  ): AgentIntent {
+    if (agent.carryingFood > 0 && base) {
+      return 'deliver';
+    }
+
+    if (enemy && this.isTruceActive(agent.speciesId, enemy.speciesId)) {
+      return agent.dna.social > 0.5 ? 'peace' : 'avoid';
+    }
+
+    if (enemy && this.tryMakePeace(agent, enemy, localAllies, localEnemies)) {
+      return 'peace';
+    }
+
+    const outnumbered = enemy && localEnemies > localAllies + 2;
+    const supported = localAllies + 1 >= Math.max(1, localEnemies);
+    const nearThreatenedBase = base && base.threatLevel > 0 && distanceSquared(agent.position, base.position) < (base.radius + 160) ** 2;
+
+    if (outnumbered && agent.dna.social > 0.44) {
+      if (this.world.tick % 96 === agent.id % 96) {
+        this.addVisualEffect('rally', agent.position, agent.speciesId);
+      }
+
+      if (!this.firstRallyLogged) {
+        this.firstRallyLogged = true;
+        this.addTimelineEvent('milestone', 'First rally', `${this.getSpeciesLabel(agent.speciesId)} agents started grouping against a larger force.`);
+      }
+
+      return base ? 'rally' : 'avoid';
+    }
+
+    if (enemy && agent.energy > 36 && (nearThreatenedBase || (supported && agent.dna.aggression > 0.38) || agent.dna.aggression > 0.68)) {
+      return nearThreatenedBase ? 'defend' : 'attack';
+    }
+
+    if (base && agent.energy < 42) {
+      return 'shelter';
+    }
+
+    if (food && (agent.energy < 88 || (base && base.foodStock < Math.max(42, base.population * 12)))) {
+      return 'forage';
+    }
+
+    if (base && agent.dna.social > 0.72 && base.foodStock > 18) {
+      return 'shelter';
+    }
+
+    return 'wander';
+  }
+
+  private tryMakePeace(agent: Agent, enemy: Agent, localAllies: number, localEnemies: number) {
+    const relation = this.getRelation(agent.speciesId, enemy.speciesId);
+
+    if (relation.truceUntil > this.world.tick || relation.tension < 7) {
+      return false;
+    }
+
+    const outnumbered = localEnemies > localAllies + 1;
+    const peaceDrive = agent.dna.social * 0.7 + (1 - agent.dna.aggression) * 0.5 + (outnumbered ? 0.3 : 0);
+
+    if (peaceDrive < 0.82 || distanceSquared(agent.position, enemy.position) > 92 ** 2) {
+      return false;
+    }
+
+    relation.tension = Math.max(0, relation.tension - 8);
+    relation.truceUntil = this.world.tick + Math.round(dayLength * (2.2 + agent.dna.social * 3.6));
+    this.addVisualEffect('peace', {
+      x: (agent.position.x + enemy.position.x) / 2,
+      y: (agent.position.y + enemy.position.y) / 2,
+    }, agent.speciesId);
+
+    if (!this.firstPeaceLogged) {
+      this.firstPeaceLogged = true;
+      this.addTimelineEvent(
+        'milestone',
+        'First fragile peace',
+        `${this.getSpeciesLabel(agent.speciesId)} and ${this.getSpeciesLabel(enemy.speciesId)} paused a conflict instead of escalating it.`,
+      );
+    }
+
+    return true;
+  }
+
+  private getRelationKey(speciesA: string, speciesB: string) {
+    return [speciesA, speciesB].sort().join(':');
+  }
+
+  private getRelation(speciesA: string, speciesB: string) {
+    const key = this.getRelationKey(speciesA, speciesB);
+    const existing = this.relations.get(key);
+
+    if (existing) {
+      return existing;
+    }
+
+    const relation: SpeciesRelation = { tension: 0, truceUntil: 0 };
+    this.relations.set(key, relation);
+    return relation;
+  }
+
+  private adjustTension(speciesA: string, speciesB: string, amount: number) {
+    const relation = this.getRelation(speciesA, speciesB);
+    relation.tension = clamp(relation.tension + amount, 0, 40);
+  }
+
+  private isTruceActive(speciesA: string, speciesB: string) {
+    return this.getRelation(speciesA, speciesB).truceUntil > this.world.tick;
+  }
+
+  private coolDiplomacy() {
+    this.relations.forEach((relation) => {
+      relation.tension = Math.max(0, relation.tension - 0.42);
+
+      if (relation.truceUntil <= this.world.tick) {
+        relation.truceUntil = 0;
+      }
+    });
   }
 
   private getSpeciesLabel(speciesId: string) {

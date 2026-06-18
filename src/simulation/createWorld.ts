@@ -44,6 +44,8 @@ export const createAgent = (
   generation,
   speciesId,
   tribeId: null,
+  intent: 'wander',
+  carryingFood: 0,
   reproductionCooldown: randomRange(0, 70),
   combatCooldown: randomRange(0, 80),
   memory: [],

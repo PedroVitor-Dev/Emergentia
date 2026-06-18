@@ -21,6 +21,17 @@ export type Species = {
   bornDay: number;
 };
 
+export type AgentIntent =
+  | 'wander'
+  | 'forage'
+  | 'deliver'
+  | 'shelter'
+  | 'attack'
+  | 'defend'
+  | 'rally'
+  | 'avoid'
+  | 'peace';
+
 export type Agent = {
   id: number;
   position: Vector2;
@@ -32,6 +43,8 @@ export type Agent = {
   generation: number;
   speciesId: string;
   tribeId: string | null;
+  intent: AgentIntent;
+  carryingFood: number;
   reproductionCooldown: number;
   combatCooldown: number;
   memory: Vector2[];
@@ -49,6 +62,8 @@ export type Base = {
   speciesId: string;
   radius: number;
   population: number;
+  foodStock: number;
+  threatLevel: number;
   buildProgress: number;
   expansionLevel: number;
   bornDay: number;
@@ -87,7 +102,7 @@ export type TimelineEvent = {
   detail: string;
 };
 
-export type VisualEffectType = 'birth' | 'eat' | 'death' | 'combat' | 'build';
+export type VisualEffectType = 'birth' | 'eat' | 'death' | 'combat' | 'build' | 'deposit' | 'peace' | 'rally';
 
 export type VisualEffect = {
   id: number;

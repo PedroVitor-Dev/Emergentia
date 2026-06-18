@@ -40,7 +40,10 @@ const initialGoldMines = 8;
 const storedFoodSpoilageRate = 0.035;
 const territoryClaimRadius = 92;
 const maxCarryGold = 18;
-const castleInnerRadius = 74;
+const castleInnerRadius = 96;
+const survivalEnergy = 34;
+const phagogenesisDistance = 0.24;
+const phagogenesisChance = 0.18;
 
 type SpeciesRelation = {
   tension: number;
@@ -236,21 +239,23 @@ export class SimulationEngine {
       const nearestBase = this.findNearestBase(agent);
       const nearestTerritory = this.findNearestClaimableTerritory(agent);
       const nearestGoldMine = this.findNearestGoldMine(agent);
+      const nearestMate = this.findNearestMate(agent);
       const speciesLeader = this.findSpeciesLeader(agent.speciesId);
       const localAllies = this.countNearbyAgents(agent, true, 128);
       const localEnemies = this.countNearbyAgents(agent, false, 128);
       const hunger = clamp((86 - agent.energy) / 86);
       const curiosity = agent.dna.curiosity - 0.5;
-      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, nearestTerritory, nearestGoldMine, localAllies, localEnemies);
-      const socialPull = nearestAlly && agent.energy > 34 && !['claim', 'forage', 'mine'].includes(intent) ? agent.dna.social * 0.26 : 0;
-      const basePull = nearestBase && ['deliver', 'deliverGold', 'shelter', 'defend', 'rally'].includes(intent) ? 0.82 + agent.dna.social * 0.52 : 0;
+      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, nearestTerritory, nearestGoldMine, nearestMate, localAllies, localEnemies);
+      const socialPull = nearestAlly && agent.energy > 34 && !['claim', 'forage', 'mine', 'mate'].includes(intent) ? agent.dna.social * 0.22 : 0;
+      const basePull = nearestBase && ['deliver', 'deliverGold', 'defend', 'rally'].includes(intent) ? 0.72 + agent.dna.social * 0.42 : 0;
       const enemyPull = nearestEnemy && (intent === 'attack' || intent === 'defend') ? Math.max(0.1, agent.dna.aggression - 0.18) * 0.9 : 0;
       const enemyRepel = nearestEnemy && (intent === 'avoid' || intent === 'peace') ? 0.72 + (1 - agent.dna.aggression) * 0.35 : 0;
       const foodPull = nearestFood && intent === 'forage' ? (0.72 + hunger) * (0.72 + agent.dna.vision) : 0;
       const territoryPull = nearestTerritory && intent === 'claim' ? 0.76 + agent.dna.curiosity * 0.44 + agent.dna.social * 0.28 : 0;
       const goldPull = nearestGoldMine && intent === 'mine' ? 0.8 + agent.dna.curiosity * 0.3 : 0;
+      const matePull = nearestMate && intent === 'mate' ? 0.65 + agent.dna.social * 0.4 + agent.dna.fertility * 0.3 : 0;
       const leaderPull =
-        speciesLeader && !agent.isLeader && agent.dna.social > 0.48 && !['claim', 'forage', 'mine'].includes(intent)
+        speciesLeader && !agent.isLeader && agent.dna.social > 0.48 && !['claim', 'forage', 'mine', 'mate'].includes(intent)
           ? 0.12 + agent.dna.social * 0.24
           : 0;
       agent.intent = intent;
@@ -299,10 +304,17 @@ export class SimulationEngine {
             y: nearestGoldMine.position.y - agent.position.y,
           })
         : { x: 0, y: 0 };
+      const toMate = nearestMate
+        ? normalize({
+            x: nearestMate.position.x - agent.position.x,
+            y: nearestMate.position.y - agent.position.y,
+          })
+        : { x: 0, y: 0 };
       const direction = normalize({
         x:
           toFood.x * foodPull +
           toGold.x * goldPull +
+          toMate.x * matePull +
           toTerritory.x * territoryPull +
           toAlly.x * socialPull +
           toLeader.x * leaderPull +
@@ -312,6 +324,7 @@ export class SimulationEngine {
         y:
           toFood.y * foodPull +
           toGold.y * goldPull +
+          toMate.y * matePull +
           toTerritory.y * territoryPull +
           toAlly.y * socialPull +
           toLeader.y * leaderPull +
@@ -457,31 +470,30 @@ export class SimulationEngine {
   }
 
   private enforceCastleAccess(agent: Agent) {
-    if (agent.isLeader) {
-      return;
-    }
+    this.bases.forEach((base) => {
+      const isCastleLeader = agent.isLeader && agent.speciesId === base.speciesId;
 
-    const base = this.bases.find((item) => item.speciesId === agent.speciesId);
+      if (isCastleLeader) {
+        return;
+      }
 
-    if (!base) {
-      return;
-    }
+      const dx = agent.position.x - base.position.x;
+      const dy = agent.position.y - base.position.y;
+      const distance = Math.hypot(dx, dy);
+      const minimumDistance = castleInnerRadius + base.fenceLevel * 12;
 
-    const dx = agent.position.x - base.position.x;
-    const dy = agent.position.y - base.position.y;
-    const distance = Math.hypot(dx, dy);
-    const minimumDistance = castleInnerRadius + base.fenceLevel * 8;
+      if (distance >= minimumDistance) {
+        return;
+      }
 
-    if (distance <= 0 || distance >= minimumDistance) {
-      return;
-    }
-
-    const nx = dx / distance;
-    const ny = dy / distance;
-    agent.position.x = base.position.x + nx * minimumDistance;
-    agent.position.y = base.position.y + ny * minimumDistance;
-    agent.velocity.x += nx * 0.18;
-    agent.velocity.y += ny * 0.18;
+      const fallbackAngle = (agent.id * 2.399 + this.world.tick * 0.01) % (Math.PI * 2);
+      const nx = distance > 0.001 ? dx / distance : Math.cos(fallbackAngle);
+      const ny = distance > 0.001 ? dy / distance : Math.sin(fallbackAngle);
+      agent.position.x = clamp(base.position.x + nx * (minimumDistance + 10), 0, this.world.width);
+      agent.position.y = clamp(base.position.y + ny * (minimumDistance + 10), 0, this.world.height);
+      agent.velocity.x += nx * 0.42;
+      agent.velocity.y += ny * 0.42;
+    });
   }
 
   private resolveReproduction() {
@@ -490,36 +502,60 @@ export class SimulationEngine {
     }
 
     const children: Agent[] = [];
-    const readyAgents = this.agents.filter((agent) => agent.energy > 82 && agent.age > 20 && agent.reproductionCooldown === 0);
+    const readyAgents = this.agents.filter(
+      (agent) => agent.energy > 76 && agent.age > 18 && agent.reproductionCooldown === 0 && !agent.isLeader && agent.role !== 'warrior',
+    );
 
     readyAgents.forEach((parentA) => {
-      if (parentA.energy < 82 || children.length >= maxBirthsPerStep || this.agents.length + children.length >= softPopulationLimit) {
+      if (parentA.energy < 76 || children.length >= maxBirthsPerStep || this.agents.length + children.length >= softPopulationLimit) {
         return;
       }
 
       const parentB = readyAgents.find(
         (candidate) =>
           candidate.id !== parentA.id &&
-          candidate.energy > 70 &&
-          distanceSquared(candidate.position, parentA.position) < (38 + parentA.dna.social * 52) ** 2,
+          candidate.speciesId === parentA.speciesId &&
+          candidate.energy > 72 &&
+          candidate.role !== 'warrior' &&
+          this.getRomanceCompatibility(parentA, candidate) > 0.56 &&
+          distanceSquared(candidate.position, parentA.position) < (42 + parentA.dna.social * 58 + parentA.dna.fertility * 40) ** 2,
       );
 
       if (!parentB) {
         return;
       }
 
-      const dna = blendDna(parentA.dna, parentB.dna);
-      const child = createAgent(this.nextAgentId++, this.world, parentA.speciesId, Math.max(parentA.generation, parentB.generation) + 1, dna);
+      const localEnemies = this.countNearbyAgents(parentA, false, 150);
+
+      if (localEnemies > 0 && parentA.energy < 96) {
+        return;
+      }
+
+      const compatibility = this.getRomanceCompatibility(parentA, parentB);
+      const dna = this.createPhagogeneticDna(parentA, parentB, compatibility);
+      const phagogenesis = this.shouldTriggerPhagogenesis(parentA, parentB, dna, compatibility);
+      const newSpecies = phagogenesis ? this.createPhagogenesisSpecies(dna, parentA, parentB) : null;
+      const speciesId = newSpecies?.id ?? parentA.speciesId;
+      const child = createAgent(this.nextAgentId++, this.world, speciesId, Math.max(parentA.generation, parentB.generation) + 1, dna);
       child.position = {
         x: (parentA.position.x + parentB.position.x) / 2 + randomRange(-12, 12),
         y: (parentA.position.y + parentB.position.y) / 2 + randomRange(-12, 12),
       };
-      child.energy = 48;
+      child.energy = phagogenesis ? 58 : 50;
       child.isLeader = false;
+      child.role = 'worker';
+      if (newSpecies && !newSpecies.leaderId) {
+        child.isLeader = true;
+        child.role = 'leader';
+        child.energy = 118;
+        child.age = Math.max(child.age, 22);
+        newSpecies.leaderId = child.id;
+        this.foundCastleForSpecies(newSpecies, child.position);
+      }
       parentA.energy -= 29;
       parentB.energy -= 24;
-      parentA.reproductionCooldown = 90 - parentA.dna.fertility * 38;
-      parentB.reproductionCooldown = 90 - parentB.dna.fertility * 38;
+      parentA.reproductionCooldown = 110 - parentA.dna.fertility * 46;
+      parentB.reproductionCooldown = 110 - parentB.dna.fertility * 46;
       children.push(child);
       this.births += 1;
       this.reproductions += 1;
@@ -527,11 +563,59 @@ export class SimulationEngine {
 
       if (!this.firstReproductionLogged) {
         this.firstReproductionLogged = true;
-        this.addTimelineEvent('reproduction', 'First reproduction', `Agent #${child.id} was born as generation ${child.generation}.`);
+        this.addTimelineEvent('reproduction', 'First bonded birth', `Agent #${child.id} was born after two compatible agents stayed together.`);
+      }
+
+      if (phagogenesis) {
+        this.addTimelineEvent('species', 'Phagogenesis birth', `Agent #${child.id} founded ${this.getSpeciesLabel(speciesId)} with unusual mixed traits.`);
       }
     });
 
     this.agents.push(...children);
+  }
+
+  private createPhagogeneticDna(parentA: Agent, parentB: Agent, compatibility: number): Dna {
+    const dna = blendDna(parentA.dna, parentB.dna);
+    const novelty = dnaDistance(parentA.dna, parentB.dna);
+    const mutationScale = novelty > 0.16 || compatibility > 0.78 ? 0.08 : 0.035;
+
+    return {
+      speed: clamp(dna.speed + randomRange(-mutationScale, mutationScale), 0.02, 0.98),
+      vision: clamp(dna.vision + randomRange(-mutationScale, mutationScale), 0.02, 0.98),
+      aggression: clamp(dna.aggression + randomRange(-mutationScale * 0.8, mutationScale * 1.1), 0.02, 0.98),
+      curiosity: clamp(dna.curiosity + randomRange(-mutationScale * 0.7, mutationScale * 1.25), 0.02, 0.98),
+      fertility: clamp(dna.fertility + randomRange(-mutationScale, mutationScale), 0.02, 0.98),
+      social: clamp(dna.social + randomRange(-mutationScale * 0.8, mutationScale * 1.1), 0.02, 0.98),
+    };
+  }
+
+  private shouldTriggerPhagogenesis(parentA: Agent, parentB: Agent, childDna: Dna, compatibility: number) {
+    const parentNovelty = dnaDistance(parentA.dna, parentB.dna);
+    const species = this.species.find((item) => item.id === parentA.speciesId);
+    const speciesNovelty = species ? dnaDistance(childDna, species.signature) : 0;
+    const chance = phagogenesisChance + Math.max(0, parentNovelty - 0.13) * 0.9 + Math.max(0, compatibility - 0.72) * 0.35;
+
+    return (parentNovelty > phagogenesisDistance || speciesNovelty > 0.2) && Math.random() < chance && this.species.length < 9;
+  }
+
+  private createPhagogenesisSpecies(signature: Dna, parentA: Agent, parentB: Agent) {
+    const existing = this.species.find((species) => dnaDistance(signature, species.signature) < 0.11);
+
+    if (existing) {
+      return existing;
+    }
+
+    const species = this.createSpecies(signature);
+    this.species.push(species);
+    this.addLeaderMessage(
+      parentA.speciesId,
+      parentB.speciesId,
+      'strategy',
+      `${species.name} emerged from phagogenesis. The bloodline changed shape to survive.`,
+      `${species.name} surgiu por fagogênese. A linhagem mudou de forma para sobreviver.`,
+      'phagogenesis',
+    );
+    return species;
   }
 
   private resolveCombat() {
@@ -1083,6 +1167,58 @@ export class SimulationEngine {
     return nearest;
   }
 
+  private findNearestMate(agent: Agent): Agent | null {
+    if (agent.isLeader || agent.role === 'warrior' || agent.energy < 74 || agent.age < 18 || agent.reproductionCooldown > 0) {
+      return null;
+    }
+
+    const radius = (72 + agent.dna.social * 130 + agent.dna.fertility * 80) ** 2;
+    let nearest: Agent | null = null;
+    let nearestScore = Number.POSITIVE_INFINITY;
+
+    this.agents.forEach((candidate) => {
+      if (
+        candidate.id === agent.id ||
+        candidate.isLeader ||
+        candidate.role === 'warrior' ||
+        candidate.speciesId !== agent.speciesId ||
+        candidate.energy < 70 ||
+        candidate.age < 18 ||
+        candidate.reproductionCooldown > 0
+      ) {
+        return;
+      }
+
+      const distance = distanceSquared(agent.position, candidate.position);
+
+      if (distance > radius) {
+        return;
+      }
+
+      const compatibility = this.getRomanceCompatibility(agent, candidate);
+      const score = distance - compatibility * 18000;
+
+      if (score < nearestScore) {
+        nearest = candidate;
+        nearestScore = score;
+      }
+    });
+
+    return nearest;
+  }
+
+  private getRomanceCompatibility(agentA: Agent, agentB: Agent) {
+    const geneticNovelty = dnaDistance(agentA.dna, agentB.dna);
+    const temperament =
+      1 -
+      (Math.abs(agentA.dna.aggression - agentB.dna.aggression) * 0.28 +
+        Math.abs(agentA.dna.social - agentB.dna.social) * 0.34 +
+        Math.abs(agentA.dna.curiosity - agentB.dna.curiosity) * 0.2);
+    const fertility = (agentA.dna.fertility + agentB.dna.fertility) / 2;
+
+    return clamp(temperament * 0.52 + fertility * 0.36 + Math.min(0.22, geneticNovelty) * 0.8, 0, 1);
+  }
+
   private findNearestEnemy(agent: Agent): Agent | null {
     const radius = (64 + agent.dna.aggression * 170) ** 2;
     let nearest: Agent | null = null;
@@ -1199,9 +1335,14 @@ export class SimulationEngine {
     enemy: Agent | null,
     territory: LandPatch | null,
     goldMine: GoldMine | null,
+    mate: Agent | null,
     localAllies: number,
     localEnemies: number,
   ): AgentIntent {
+    const outnumbered = enemy && localEnemies > localAllies + 1;
+    const supported = localAllies + 1 >= Math.max(1, localEnemies);
+    const nearThreatenedBase = base && base.threatLevel > 0 && distanceSquared(agent.position, base.position) < (base.radius + 190) ** 2;
+
     if (agent.carryingGold > 0 && base) {
       return 'deliverGold';
     }
@@ -1210,8 +1351,20 @@ export class SimulationEngine {
       return 'deliver';
     }
 
-    if (agent.energy < 64 && food) {
+    if (agent.energy < survivalEnergy && enemy) {
+      return supported && agent.role === 'warrior' ? 'defend' : 'avoid';
+    }
+
+    if (agent.energy < 58 && food) {
       return 'forage';
+    }
+
+    if (agent.energy < 42 && base && base.foodStock > 0 && agent.isLeader) {
+      return 'shelter';
+    }
+
+    if (enemy && outnumbered && agent.role !== 'warrior') {
+      return 'avoid';
     }
 
     if (enemy && this.isTruceActive(agent.speciesId, enemy.speciesId)) {
@@ -1221,10 +1374,6 @@ export class SimulationEngine {
     if (enemy && this.tryMakePeace(agent, enemy, localAllies, localEnemies)) {
       return 'peace';
     }
-
-    const outnumbered = enemy && localEnemies > localAllies + 2;
-    const supported = localAllies + 1 >= Math.max(1, localEnemies);
-    const nearThreatenedBase = base && base.threatLevel > 0 && distanceSquared(agent.position, base.position) < (base.radius + 160) ** 2;
 
     if (outnumbered && agent.dna.social > 0.44) {
       if (this.world.tick % 96 === agent.id % 96) {
@@ -1240,12 +1389,16 @@ export class SimulationEngine {
       return base ? 'rally' : 'avoid';
     }
 
-    if (enemy && agent.energy > 36 && (nearThreatenedBase || (supported && agent.dna.aggression > 0.38) || agent.dna.aggression > 0.68)) {
+    if (enemy && agent.energy > 46 && (nearThreatenedBase || (supported && agent.dna.aggression > 0.42) || (agent.role === 'warrior' && supported))) {
       return nearThreatenedBase ? 'defend' : 'attack';
     }
 
-    if (agent.role === 'warrior' && enemy && agent.energy > 30) {
+    if (agent.role === 'warrior' && enemy && agent.energy > 42 && supported) {
       return base?.threatLevel ? 'defend' : 'attack';
+    }
+
+    if (mate && agent.energy > 74 && agent.reproductionCooldown === 0 && !enemy) {
+      return 'mate';
     }
 
     if (goldMine && agent.energy > 46 && (!base || base.foodStock > 6 || agent.dna.curiosity > 0.55)) {
@@ -1256,7 +1409,7 @@ export class SimulationEngine {
       return 'claim';
     }
 
-    if (base && agent.energy < 42 && base.foodStock > 0) {
+    if (base && agent.energy < 42 && base.foodStock > 0 && agent.isLeader) {
       return 'shelter';
     }
 
@@ -1673,6 +1826,7 @@ export class SimulationEngine {
       agent.isLeader = false;
     });
     leader.isLeader = true;
+    leader.role = 'leader';
     leader.energy = Math.max(leader.energy, 110);
     newSpecies.leaderId = leader.id;
 

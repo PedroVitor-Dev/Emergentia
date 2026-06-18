@@ -28,6 +28,7 @@ export type AgentIntent =
   | 'deliver'
   | 'mine'
   | 'deliverGold'
+  | 'mate'
   | 'shelter'
   | 'attack'
   | 'defend'

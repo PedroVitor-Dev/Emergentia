@@ -37,6 +37,7 @@ export const createAgent = (
     x: randomRange(-1, 1),
     y: randomRange(-1, 1),
   },
+  facingAngle: randomRange(-Math.PI, Math.PI),
   energy: randomRange(58, 92),
   age: randomRange(1, 18),
   dna,
@@ -44,6 +45,7 @@ export const createAgent = (
   speciesId,
   tribeId: null,
   reproductionCooldown: randomRange(0, 70),
+  combatCooldown: randomRange(0, 80),
   memory: [],
 });
 

@@ -12,6 +12,8 @@ const softPopulationLimit = 180;
 const maxBirthsPerStep = 6;
 const maxVisualEffects = 96;
 const visualEffectLifetime = 96;
+const collisionRadius = 26;
+const combatRadius = 42;
 
 export class SimulationEngine {
   private world: World;
@@ -28,6 +30,7 @@ export class SimulationEngine {
   private reproductions = 0;
   private firstDeathLogged = false;
   private firstReproductionLogged = false;
+  private firstCombatLogged = false;
   private visualEffects: VisualEffect[] = [];
 
   constructor() {
@@ -38,7 +41,7 @@ export class SimulationEngine {
     this.agents = Array.from({ length: initialAgents }, (_, index) => {
       const species = index % 2 === 0 ? firstSpecies : secondSpecies;
       const agent = createAgent(this.nextAgentId++, this.world, species.id, 1, species.signature);
-      const side = index % 2 === 0 ? 0.34 : 0.66;
+      const side = index % 2 === 0 ? 0.43 : 0.57;
       agent.position.x = randomRange(this.world.width * (side - 0.08), this.world.width * (side + 0.08));
       agent.position.y = randomRange(this.world.height * 0.34, this.world.height * 0.66);
       return agent;
@@ -73,6 +76,7 @@ export class SimulationEngine {
     this.reproductions = fresh.reproductions;
     this.firstDeathLogged = false;
     this.firstReproductionLogged = false;
+    this.firstCombatLogged = false;
     this.visualEffects = fresh.visualEffects;
   }
 
@@ -88,7 +92,9 @@ export class SimulationEngine {
       }
 
       this.moveAgents();
+      this.resolveCollisions();
       this.resolveEating();
+      this.resolveCombat();
       this.resolveReproduction();
       this.resolveMortality();
       this.pruneVisualEffects();
@@ -114,9 +120,11 @@ export class SimulationEngine {
     this.agents.forEach((agent) => {
       const nearestFood = this.findNearestFood(agent);
       const nearestAlly = this.findNearestAlly(agent);
+      const nearestEnemy = this.findNearestEnemy(agent);
       const hunger = clamp((86 - agent.energy) / 86);
       const curiosity = agent.dna.curiosity - 0.5;
       const socialPull = nearestAlly && agent.energy > 34 ? agent.dna.social * 0.34 : 0;
+      const enemyPull = nearestEnemy && agent.energy > 38 ? Math.max(0, agent.dna.aggression - 0.24) * 0.72 : 0;
       const foodPull = nearestFood ? hunger * (0.82 + agent.dna.vision) : 0;
       const wander = {
         x: Math.sin((this.world.tick + agent.id * 7) * 0.018) * curiosity,
@@ -133,9 +141,15 @@ export class SimulationEngine {
             y: nearestAlly.position.y - agent.position.y,
           })
         : { x: 0, y: 0 };
+      const toEnemy = nearestEnemy
+        ? normalize({
+            x: nearestEnemy.position.x - agent.position.x,
+            y: nearestEnemy.position.y - agent.position.y,
+          })
+        : { x: 0, y: 0 };
       const direction = normalize({
-        x: toFood.x * foodPull + toAlly.x * socialPull + wander.x,
-        y: toFood.y * foodPull + toAlly.y * socialPull + wander.y,
+        x: toFood.x * foodPull + toAlly.x * socialPull + toEnemy.x * enemyPull + wander.x,
+        y: toFood.y * foodPull + toAlly.y * socialPull + toEnemy.y * enemyPull + wander.y,
       });
       const speed = 0.48 + agent.dna.speed * 1.18;
 
@@ -143,6 +157,7 @@ export class SimulationEngine {
         x: agent.velocity.x * 0.9 + direction.x * speed * 0.1,
         y: agent.velocity.y * 0.9 + direction.y * speed * 0.1,
       };
+      this.updateFacing(agent);
       agent.position = wrapPosition(
         {
           x: agent.position.x + agent.velocity.x,
@@ -154,7 +169,52 @@ export class SimulationEngine {
       agent.energy -= 0.024 + agent.dna.speed * 0.014 + agent.dna.vision * 0.007;
       agent.age += 1 / dayLength;
       agent.reproductionCooldown = Math.max(0, agent.reproductionCooldown - 1);
+      agent.combatCooldown = Math.max(0, agent.combatCooldown - 1);
     });
+  }
+
+  private updateFacing(agent: Agent) {
+    const speed = Math.hypot(agent.velocity.x, agent.velocity.y);
+
+    if (speed < 0.04) {
+      return;
+    }
+
+    const targetAngle = Math.atan2(agent.velocity.x, agent.velocity.y);
+    const difference = Math.atan2(Math.sin(targetAngle - agent.facingAngle), Math.cos(targetAngle - agent.facingAngle));
+    agent.facingAngle += difference * 0.14;
+  }
+
+  private resolveCollisions() {
+    for (let index = 0; index < this.agents.length; index += 1) {
+      const agentA = this.agents[index];
+
+      for (let next = index + 1; next < this.agents.length; next += 1) {
+        const agentB = this.agents[next];
+        const dx = agentA.position.x - agentB.position.x;
+        const dy = agentA.position.y - agentB.position.y;
+        const distance = Math.hypot(dx, dy);
+
+        if (distance <= 0 || distance >= collisionRadius) {
+          continue;
+        }
+
+        const push = (collisionRadius - distance) * 0.46;
+        const nx = dx / distance;
+        const ny = dy / distance;
+
+        agentA.position.x += nx * push;
+        agentA.position.y += ny * push;
+        agentB.position.x -= nx * push;
+        agentB.position.y -= ny * push;
+        agentA.velocity.x += nx * 0.025;
+        agentA.velocity.y += ny * 0.025;
+        agentB.velocity.x -= nx * 0.025;
+        agentB.velocity.y -= ny * 0.025;
+        agentA.position = wrapPosition(agentA.position, this.world.width, this.world.height);
+        agentB.position = wrapPosition(agentB.position, this.world.width, this.world.height);
+      }
+    }
   }
 
   private resolveEating() {
@@ -226,6 +286,45 @@ export class SimulationEngine {
     this.agents.push(...children);
   }
 
+  private resolveCombat() {
+    for (let index = 0; index < this.agents.length; index += 1) {
+      const attacker = this.agents[index];
+
+      if (attacker.combatCooldown > 0 || attacker.energy < 22 || attacker.dna.aggression < 0.28) {
+        continue;
+      }
+
+      const target = this.agents.find(
+        (candidate) =>
+          candidate.id !== attacker.id &&
+          candidate.speciesId !== attacker.speciesId &&
+          candidate.energy > 0 &&
+          distanceSquared(attacker.position, candidate.position) < combatRadius ** 2,
+      );
+
+      if (!target) {
+        continue;
+      }
+
+      const damage = 2.6 + attacker.dna.aggression * 7.4;
+      target.energy -= damage;
+      attacker.energy -= 0.8 + attacker.dna.aggression * 1.2;
+      attacker.combatCooldown = 46 - attacker.dna.aggression * 18;
+      target.combatCooldown = Math.max(target.combatCooldown, 24);
+      attacker.facingAngle = Math.atan2(target.position.x - attacker.position.x, target.position.y - attacker.position.y);
+      target.facingAngle = Math.atan2(attacker.position.x - target.position.x, attacker.position.y - target.position.y);
+      this.addVisualEffect('combat', {
+        x: (attacker.position.x + target.position.x) / 2,
+        y: (attacker.position.y + target.position.y) / 2,
+      }, attacker.speciesId);
+
+      if (!this.firstCombatLogged) {
+        this.firstCombatLogged = true;
+        this.addTimelineEvent('milestone', 'First clash', `Agent #${attacker.id} attacked agent #${target.id} near an apple grove.`);
+      }
+    }
+  }
+
   private resolveMortality() {
     const before = this.agents.length;
     this.agents = this.agents.filter((agent) => {
@@ -279,6 +378,27 @@ export class SimulationEngine {
 
     this.agents.forEach((candidate) => {
       if (candidate.id === agent.id || candidate.speciesId !== agent.speciesId) {
+        return;
+      }
+
+      const distance = distanceSquared(agent.position, candidate.position);
+
+      if (distance < radius && distance < nearestDistance) {
+        nearest = candidate;
+        nearestDistance = distance;
+      }
+    });
+
+    return nearest;
+  }
+
+  private findNearestEnemy(agent: Agent): Agent | null {
+    const radius = (64 + agent.dna.aggression * 170) ** 2;
+    let nearest: Agent | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    this.agents.forEach((candidate) => {
+      if (candidate.id === agent.id || candidate.speciesId === agent.speciesId) {
         return;
       }
 

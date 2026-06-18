@@ -25,6 +25,7 @@ export type Agent = {
   id: number;
   position: Vector2;
   velocity: Vector2;
+  facingAngle: number;
   energy: number;
   age: number;
   dna: Dna;
@@ -32,6 +33,7 @@ export type Agent = {
   speciesId: string;
   tribeId: string | null;
   reproductionCooldown: number;
+  combatCooldown: number;
   memory: Vector2[];
 };
 
@@ -66,7 +68,7 @@ export type TimelineEvent = {
   detail: string;
 };
 
-export type VisualEffectType = 'birth' | 'eat' | 'death';
+export type VisualEffectType = 'birth' | 'eat' | 'death' | 'combat';
 
 export type VisualEffect = {
   id: number;

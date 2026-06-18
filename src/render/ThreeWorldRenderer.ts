@@ -42,7 +42,9 @@ export class ThreeWorldRenderer {
   private readonly mapCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3600);
   private readonly spectatorPosition = new THREE.Vector3(0, 95, 440);
   private readonly mapTarget = new THREE.Vector3(0, 0, 0);
-  private readonly foodMesh: THREE.InstancedMesh;
+  private readonly appleBodyMesh: THREE.InstancedMesh;
+  private readonly appleStemMesh: THREE.InstancedMesh;
+  private readonly appleLeafMesh: THREE.InstancedMesh;
   private readonly creaturePool: CreatureRig[] = [];
   private readonly effectPool: EffectRig[] = [];
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
@@ -79,8 +81,10 @@ export class ThreeWorldRenderer {
     this.scene.background = new THREE.Color('#7fcfe4');
     this.scene.fog = new THREE.Fog('#7fcfe4', 520, 1750);
 
-    this.foodMesh = this.createFoodMesh();
-    this.scene.add(this.foodMesh);
+    this.appleBodyMesh = this.createAppleBodyMesh();
+    this.appleStemMesh = this.createAppleStemMesh();
+    this.appleLeafMesh = this.createAppleLeafMesh();
+    this.scene.add(this.appleBodyMesh, this.appleStemMesh, this.appleLeafMesh);
 
     this.createWorldStage();
     this.createLights();
@@ -457,13 +461,27 @@ export class ThreeWorldRenderer {
     this.scene.add(greenLight);
   }
 
-  private createFoodMesh() {
-    const geometry = new THREE.IcosahedronGeometry(2.2, 1);
+  private createAppleBodyMesh() {
+    const geometry = new THREE.SphereGeometry(3.8, 8, 8);
     const material = new THREE.MeshBasicMaterial({
-      color: '#8ff6ae',
-      transparent: true,
-      opacity: 0.82,
+      color: '#d82635',
     });
+    const mesh = new THREE.InstancedMesh(geometry, material, maxVisibleFood);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return mesh;
+  }
+
+  private createAppleStemMesh() {
+    const geometry = new THREE.CylinderGeometry(0.45, 0.58, 3.2, 5);
+    const material = new THREE.MeshBasicMaterial({ color: '#3a2417' });
+    const mesh = new THREE.InstancedMesh(geometry, material, maxVisibleFood);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return mesh;
+  }
+
+  private createAppleLeafMesh() {
+    const geometry = new THREE.SphereGeometry(1.4, 6, 6);
+    const material = new THREE.MeshBasicMaterial({ color: '#55b85f' });
     const mesh = new THREE.InstancedMesh(geometry, material, maxVisibleFood);
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     return mesh;
@@ -541,15 +559,33 @@ export class ThreeWorldRenderer {
       const position = this.toScenePosition(food.position.x, food.position.y, snapshot.world);
       const pulse = 1 + Math.sin(snapshot.world.tick * 0.05 + food.id) * 0.12;
       this.reusableMatrix.compose(
-        new THREE.Vector3(position.x, 3.2 + pulse, position.z),
+        new THREE.Vector3(position.x, 4.2 + pulse, position.z),
         new THREE.Quaternion(),
-        new THREE.Vector3(pulse, pulse, pulse),
+        new THREE.Vector3(pulse, pulse * 0.92, pulse),
       );
-      this.foodMesh.setMatrixAt(index, this.reusableMatrix);
+      this.appleBodyMesh.setMatrixAt(index, this.reusableMatrix);
+
+      this.reusableMatrix.compose(
+        new THREE.Vector3(position.x, 8.2 + pulse, position.z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0.16, 0, 0.28)),
+        new THREE.Vector3(1, 1, 1),
+      );
+      this.appleStemMesh.setMatrixAt(index, this.reusableMatrix);
+
+      this.reusableMatrix.compose(
+        new THREE.Vector3(position.x + 1.4, 9 + pulse, position.z - 0.4),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0.42, 0.2, -0.65)),
+        new THREE.Vector3(1.45, 0.42, 0.82),
+      );
+      this.appleLeafMesh.setMatrixAt(index, this.reusableMatrix);
     });
 
-    this.foodMesh.count = visibleFood.length;
-    this.foodMesh.instanceMatrix.needsUpdate = true;
+    this.appleBodyMesh.count = visibleFood.length;
+    this.appleStemMesh.count = visibleFood.length;
+    this.appleLeafMesh.count = visibleFood.length;
+    this.appleBodyMesh.instanceMatrix.needsUpdate = true;
+    this.appleStemMesh.instanceMatrix.needsUpdate = true;
+    this.appleLeafMesh.instanceMatrix.needsUpdate = true;
   }
 
   private updateCreatures(snapshot: SimulationSnapshot) {
@@ -573,7 +609,7 @@ export class ThreeWorldRenderer {
 
   private updateCreatureRig(rig: CreatureRig, agent: Agent, color: string, world: World, tick: number, isEating: boolean) {
     const position = this.toScenePosition(agent.position.x, agent.position.y, world);
-    const direction = Math.atan2(agent.velocity.x, agent.velocity.y || 0.001);
+    const direction = agent.facingAngle;
     const gait = Math.sin(tick * 0.12 + agent.id) * 0.6;
     const chew = isEating ? Math.sin(tick * 0.85 + agent.id) * 0.8 : 0;
     const bodyScale = 0.82 + Math.min(0.32, agent.energy / 360);
@@ -646,10 +682,17 @@ export class ThreeWorldRenderer {
     const age = snapshot.world.tick - effect.tick;
     const progress = Math.min(1, age / 96);
     const position = this.toScenePosition(effect.position.x, effect.position.y, snapshot.world);
-    const color = effect.type === 'death' ? '#ff365b' : effect.type === 'eat' ? '#86efac' : '#f8d56b';
+    const color = effect.type === 'death' ? '#ff365b' : effect.type === 'combat' ? '#ff2f24' : effect.type === 'eat' ? '#86efac' : '#f8d56b';
     const ringMaterial = rig.ring.material as THREE.MeshBasicMaterial;
     const coreMaterial = rig.core.material as THREE.MeshBasicMaterial;
-    const scale = effect.type === 'birth' ? 1 + progress * 3.8 : effect.type === 'eat' ? 0.7 + progress * 1.4 : 1 + progress * 2.6;
+    const scale =
+      effect.type === 'birth'
+        ? 1 + progress * 3.8
+        : effect.type === 'eat'
+          ? 0.7 + progress * 1.4
+          : effect.type === 'combat'
+            ? 0.9 + Math.sin(progress * Math.PI) * 2.4
+            : 1 + progress * 2.6;
     const opacity = Math.max(0, 1 - progress);
 
     rig.root.visible = true;
@@ -657,9 +700,9 @@ export class ThreeWorldRenderer {
     rig.root.scale.setScalar(scale);
     ringMaterial.color.set(color);
     coreMaterial.color.set(color);
-    ringMaterial.opacity = opacity * (effect.type === 'death' ? 0.74 : 0.58);
-    coreMaterial.opacity = opacity * (effect.type === 'eat' ? 0.78 : 0.38);
-    rig.core.position.y = effect.type === 'death' ? progress * 18 : progress * 8;
+    ringMaterial.opacity = opacity * (effect.type === 'death' || effect.type === 'combat' ? 0.78 : 0.58);
+    coreMaterial.opacity = opacity * (effect.type === 'eat' || effect.type === 'combat' ? 0.82 : 0.38);
+    rig.core.position.y = effect.type === 'death' ? progress * 18 : effect.type === 'combat' ? 8 + Math.sin(progress * Math.PI) * 12 : progress * 8;
   }
 
   private getEatingAgentIds(snapshot: SimulationSnapshot) {

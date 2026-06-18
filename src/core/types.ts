@@ -29,6 +29,7 @@ export type AgentIntent =
   | 'shelter'
   | 'attack'
   | 'defend'
+  | 'claim'
   | 'rally'
   | 'avoid'
   | 'peace';
@@ -90,7 +91,9 @@ export type LandPatch = {
   id: number;
   position: Vector2;
   radius: number;
-  speciesId: string;
+  speciesId: string | null;
+  claimStrength: number;
+  resourceLevel: number;
   createdTick: number;
 };
 

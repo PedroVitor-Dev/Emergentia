@@ -5,7 +5,7 @@ const worldScale = 0.5;
 const maxVisibleCreatures = 160;
 const maxVisibleFood = 640;
 const maxVisibleBases = 12;
-const maxVisibleLandPatches = 32;
+const maxVisibleLandPatches = 56;
 const cameraMoveSpeed = 240;
 const cameraMinHeight = 32;
 const cameraMaxHeight = 380;
@@ -769,14 +769,16 @@ export class ThreeWorldRenderer {
       const position = this.toScenePosition(patch.position.x, patch.position.y, snapshot.world);
       const age = Math.min(1, (snapshot.world.tick - patch.createdTick) / 90);
       const material = mesh.material as THREE.MeshStandardMaterial;
-      const color = snapshot.species.find((species) => species.id === patch.speciesId)?.color ?? '#3f7241';
+      const ownerColor = patch.speciesId ? snapshot.species.find((species) => species.id === patch.speciesId)?.color : null;
+      const color = ownerColor ?? '#8c8a59';
+      const ownership = patch.speciesId ? 0.32 + patch.claimStrength * 0.6 : 0.18;
 
       mesh.visible = true;
       mesh.position.set(position.x, 0.08, position.z);
-      mesh.scale.setScalar((patch.radius * worldScale * 0.95) * (0.25 + age * 0.75));
+      mesh.scale.setScalar((patch.radius * worldScale * 0.95) * (0.35 + age * 0.65) * (0.92 + patch.resourceLevel * 0.16));
       mesh.rotation.z = patch.id * 0.41;
-      material.color.set(color).lerp(new THREE.Color('#345c32'), 0.72);
-      material.opacity = 0.42 + age * 0.5;
+      material.color.set(color).lerp(new THREE.Color(patch.speciesId ? '#263522' : '#4f5534'), patch.speciesId ? 0.34 : 0.48);
+      material.opacity = Math.min(0.82, ownership + age * 0.22 + patch.resourceLevel * 0.18);
     });
   }
 
@@ -810,13 +812,13 @@ export class ThreeWorldRenderer {
     rig.root.position.set(position.x, 1.4, position.z);
     rig.root.rotation.y = base.id * 0.57;
     rig.root.scale.setScalar(progressScale * pulse * 1.34);
-    (rig.floor.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#6d665b'), 0.5);
-    (rig.hut.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#7b7469'), 0.55);
-    (rig.centralTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.54);
-    (rig.leftTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.62);
-    (rig.rightTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.62);
+    (rig.floor.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#6d665b'), 0.16);
+    (rig.hut.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#7b7469'), 0.18);
+    (rig.centralTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.16);
+    (rig.leftTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.2);
+    (rig.rightTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.2);
     (rig.flag.material as THREE.MeshBasicMaterial).color.set(speciesColor);
-    (rig.wallSegments.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#766d61'), 0.68);
+    (rig.wallSegments.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#766d61'), 0.24);
     (rig.gate.material as THREE.MeshStandardMaterial).color.set(base.threatLevel > 0 ? '#120909' : '#21140d');
     (rig.beacon.material as THREE.MeshBasicMaterial).color.set(speciesColor);
     (rig.beacon.material as THREE.MeshBasicMaterial).opacity = 0.48 + Math.min(0.4, base.population * 0.018 + foodLevel * 0.18);

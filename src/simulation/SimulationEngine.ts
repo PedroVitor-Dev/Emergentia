@@ -31,9 +31,12 @@ const visualEffectLifetime = 96;
 const collisionRadius = 26;
 const combatRadius = 42;
 const maxBases = 7;
-const maxLandPatches = 28;
+const maxLandPatches = 42;
 const foodCarryThreshold = 48;
 const maxCarryFood = 32;
+const initialTerritories = 14;
+const storedFoodSpoilageRate = 0.035;
+const territoryClaimRadius = 92;
 
 type SpeciesRelation = {
   tension: number;
@@ -94,6 +97,7 @@ export class SimulationEngine {
       return agent;
     });
     this.foundInitialCastles();
+    this.seedNeutralTerritories();
     this.food = Array.from({ length: initialFood }, () => createFood(this.nextFoodId++, this.world));
     this.timeline = [
       {
@@ -147,6 +151,7 @@ export class SimulationEngine {
       if (this.world.tick % dayLength === 0) {
         this.world.day += 1;
         this.growFood();
+        this.decayStoredFood();
         this.coolDiplomacy();
         this.resolveLeaderDiplomacy();
         this.detectSpecies();
@@ -158,6 +163,7 @@ export class SimulationEngine {
       this.resolveEating();
       this.resolveCombat();
       this.resolveBases();
+      this.resolveTerritories();
       this.resolveReproduction();
       this.resolveMortality();
       this.pruneVisualEffects();
@@ -188,18 +194,23 @@ export class SimulationEngine {
       const nearestAlly = this.findNearestAlly(agent);
       const nearestEnemy = this.findNearestEnemy(agent);
       const nearestBase = this.findNearestBase(agent);
+      const nearestTerritory = this.findNearestClaimableTerritory(agent);
       const speciesLeader = this.findSpeciesLeader(agent.speciesId);
       const localAllies = this.countNearbyAgents(agent, true, 128);
       const localEnemies = this.countNearbyAgents(agent, false, 128);
       const hunger = clamp((86 - agent.energy) / 86);
       const curiosity = agent.dna.curiosity - 0.5;
-      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, localAllies, localEnemies);
-      const socialPull = nearestAlly && agent.energy > 34 ? agent.dna.social * 0.34 : 0;
+      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, nearestTerritory, localAllies, localEnemies);
+      const socialPull = nearestAlly && agent.energy > 34 && intent !== 'claim' && intent !== 'forage' ? agent.dna.social * 0.26 : 0;
       const basePull = nearestBase && ['deliver', 'shelter', 'defend', 'rally'].includes(intent) ? 0.82 + agent.dna.social * 0.52 : 0;
       const enemyPull = nearestEnemy && (intent === 'attack' || intent === 'defend') ? Math.max(0.1, agent.dna.aggression - 0.18) * 0.9 : 0;
       const enemyRepel = nearestEnemy && (intent === 'avoid' || intent === 'peace') ? 0.72 + (1 - agent.dna.aggression) * 0.35 : 0;
       const foodPull = nearestFood && intent === 'forage' ? (0.72 + hunger) * (0.72 + agent.dna.vision) : 0;
-      const leaderPull = speciesLeader && !agent.isLeader && agent.dna.social > 0.48 ? 0.16 + agent.dna.social * 0.34 : 0;
+      const territoryPull = nearestTerritory && intent === 'claim' ? 0.76 + agent.dna.curiosity * 0.44 + agent.dna.social * 0.28 : 0;
+      const leaderPull =
+        speciesLeader && !agent.isLeader && agent.dna.social > 0.48 && intent !== 'claim' && intent !== 'forage'
+          ? 0.12 + agent.dna.social * 0.24
+          : 0;
       agent.intent = intent;
       const wander = {
         x: Math.sin((this.world.tick + agent.id * 7) * 0.018) * curiosity,
@@ -234,9 +245,16 @@ export class SimulationEngine {
             y: speciesLeader.position.y - agent.position.y,
           })
         : { x: 0, y: 0 };
+      const toTerritory = nearestTerritory
+        ? normalize({
+            x: nearestTerritory.position.x - agent.position.x,
+            y: nearestTerritory.position.y - agent.position.y,
+          })
+        : { x: 0, y: 0 };
       const direction = normalize({
         x:
           toFood.x * foodPull +
+          toTerritory.x * territoryPull +
           toAlly.x * socialPull +
           toLeader.x * leaderPull +
           toEnemy.x * (enemyPull - enemyRepel) +
@@ -244,6 +262,7 @@ export class SimulationEngine {
           wander.x,
         y:
           toFood.y * foodPull +
+          toTerritory.y * territoryPull +
           toAlly.y * socialPull +
           toLeader.y * leaderPull +
           toEnemy.y * (enemyPull - enemyRepel) +
@@ -265,7 +284,8 @@ export class SimulationEngine {
         this.world.width,
         this.world.height,
       );
-      agent.energy -= 0.024 + agent.dna.speed * 0.014 + agent.dna.vision * 0.007;
+      const hungerPressure = agent.energy < 54 ? 0.026 : agent.energy < 72 ? 0.014 : 0;
+      agent.energy -= 0.034 + agent.dna.speed * 0.018 + agent.dna.vision * 0.009 + hungerPressure;
       agent.age += 1 / dayLength;
       agent.reproductionCooldown = Math.max(0, agent.reproductionCooldown - 1);
       agent.combatCooldown = Math.max(0, agent.combatCooldown - 1);
@@ -327,10 +347,10 @@ export class SimulationEngine {
         const nearestBase = this.findNearestBase(agent);
         const shouldCarryToBase =
           nearestBase &&
-          agent.energy > foodCarryThreshold &&
+          agent.energy > foodCarryThreshold + 8 &&
           agent.dna.social > 0.42 &&
           agent.carryingFood < maxCarryFood &&
-          nearestBase.foodStock < Math.max(36, nearestBase.population * 12);
+          nearestBase.foodStock < Math.max(34, nearestBase.population * 7);
 
         eaten.add(foodItem.id);
         if (shouldCarryToBase) {
@@ -486,6 +506,27 @@ export class SimulationEngine {
     });
   }
 
+  private seedNeutralTerritories() {
+    for (let index = 0; index < initialTerritories; index += 1) {
+      const angle = index * 2.399;
+      const ring = 360 + (index % 5) * 185;
+      const position = {
+        x: clamp(this.world.width / 2 + Math.cos(angle) * ring + randomRange(-80, 80), 140, this.world.width - 140),
+        y: clamp(this.world.height / 2 + Math.sin(angle) * ring * 0.78 + randomRange(-80, 80), 140, this.world.height - 140),
+      };
+
+      this.landPatches.push({
+        id: this.nextLandPatchId++,
+        position,
+        radius: randomRange(88, 142),
+        speciesId: null,
+        claimStrength: 0,
+        resourceLevel: randomRange(0.35, 0.95),
+        createdTick: this.world.tick,
+      });
+    }
+  }
+
   private foundInitialCastles() {
     this.species.forEach((species, index) => {
       const members = this.agents.filter((agent) => agent.speciesId === species.id);
@@ -596,6 +637,7 @@ export class SimulationEngine {
 
       base.population = workers.length;
       base.threatLevel = nearbyEnemies.length;
+      base.foodStock = Math.max(0, base.foodStock - 0.006 * Math.max(1, base.population));
 
       if (workers.length < 3) {
         base.buildProgress = Math.max(0, base.buildProgress - 0.015);
@@ -606,7 +648,7 @@ export class SimulationEngine {
         .filter((agent) => agent.energy < 42 && base.foodStock >= 6)
         .slice(0, 3)
         .forEach((agent) => {
-          const ration = Math.min(8, base.foodStock);
+          const ration = Math.min(agent.energy < 28 ? 12 : 8, base.foodStock);
           base.foodStock -= ration;
           agent.energy = Math.min(120, agent.energy + ration * 1.25);
         });
@@ -631,6 +673,75 @@ export class SimulationEngine {
     });
   }
 
+  private resolveTerritories() {
+    this.landPatches.forEach((patch) => {
+      const localAgents = this.agents.filter((agent) => distanceSquared(agent.position, patch.position) < (patch.radius + territoryClaimRadius) ** 2);
+
+      if (localAgents.length === 0) {
+        patch.claimStrength = Math.max(0, patch.claimStrength - 0.008);
+        patch.resourceLevel = Math.min(1, patch.resourceLevel + 0.0009);
+        return;
+      }
+
+      const influence = new Map<string, number>();
+      localAgents.forEach((agent) => {
+        const leaderBonus = agent.isLeader ? 2.4 : 1;
+        const hungerPenalty = agent.energy < 34 ? 0.55 : 1;
+        influence.set(agent.speciesId, (influence.get(agent.speciesId) ?? 0) + (0.8 + agent.dna.social) * leaderBonus * hungerPenalty);
+      });
+
+      const strongest = [...influence.entries()].sort((a, b) => b[1] - a[1])[0];
+
+      if (!strongest) {
+        return;
+      }
+
+      const [speciesId, power] = strongest;
+      const contested = influence.size > 1;
+      const previousOwner = patch.speciesId;
+
+      if (!patch.speciesId || patch.speciesId === speciesId) {
+        patch.speciesId = speciesId;
+        patch.claimStrength = clamp(patch.claimStrength + power * 0.015, 0, 1);
+      } else {
+        patch.claimStrength = clamp(patch.claimStrength - power * 0.018, 0, 1);
+
+        if (patch.claimStrength <= 0.08) {
+          patch.speciesId = speciesId;
+          patch.claimStrength = 0.22;
+          if (previousOwner) {
+            this.adjustTension(previousOwner, speciesId, contested ? 3.5 : 1.8);
+          }
+          this.addVisualEffect('rally', patch.position, speciesId);
+          this.addLeaderMessage(
+            speciesId,
+            previousOwner,
+            'warning',
+            'We have taken ground. Respect the new border.',
+            'Tomamos este territorio. Respeitem a nova fronteira.',
+          );
+        }
+      }
+
+      if (patch.speciesId && patch.resourceLevel > 0.16 && this.world.tick % 46 === patch.id % 46) {
+        const base = this.bases.find((item) => item.speciesId === patch.speciesId);
+        const territoryFoodCap = base ? 540 : 480;
+
+        if (this.food.length < territoryFoodCap) {
+          this.food.push({
+            id: this.nextFoodId++,
+            position: {
+              x: clamp(patch.position.x + randomRange(-patch.radius, patch.radius), 0, this.world.width),
+              y: clamp(patch.position.y + randomRange(-patch.radius, patch.radius), 0, this.world.height),
+            },
+            energy: randomRange(11, 21),
+          });
+          patch.resourceLevel = Math.max(0, patch.resourceLevel - 0.035);
+        }
+      }
+    });
+  }
+
   private expandLand(base: Base) {
     const angle = base.expansionLevel * 2.399 + (base.speciesId === 'species-0' ? 0.4 : -0.4);
     const distance = 120 + base.expansionLevel * 32;
@@ -643,6 +754,8 @@ export class SimulationEngine {
       position,
       radius: randomRange(64, 112),
       speciesId: base.speciesId,
+      claimStrength: 1,
+      resourceLevel: randomRange(0.55, 1),
       createdTick: this.world.tick,
     };
 
@@ -687,12 +800,21 @@ export class SimulationEngine {
   }
 
   private growFood() {
-    const targetFood = 240 + Math.sin(this.world.day * 0.07) * 64;
+    const ownedTerritories = this.landPatches.filter((patch) => patch.speciesId).length;
+    const targetFood = 360 + ownedTerritories * 9 + Math.sin(this.world.day * 0.07) * 80;
     const growth = Math.max(4, Math.round((targetFood - this.food.length) * 0.18 + randomRange(6, 18)));
 
     for (let index = 0; index < growth; index += 1) {
       this.food.push(createFood(this.nextFoodId++, this.world));
     }
+  }
+
+  private decayStoredFood() {
+    this.bases.forEach((base) => {
+      const populationConsumption = base.population * 0.42;
+      const spoilage = base.foodStock * storedFoodSpoilageRate;
+      base.foodStock = Math.max(0, base.foodStock - populationConsumption - spoilage);
+    });
   }
 
   private findNearestFood(agent: Agent): Food | null {
@@ -774,6 +896,44 @@ export class SimulationEngine {
     return nearest;
   }
 
+  private findNearestClaimableTerritory(agent: Agent): LandPatch | null {
+    const base = this.bases.find((item) => item.speciesId === agent.speciesId);
+    const ownedCount = this.landPatches.filter((patch) => patch.speciesId === agent.speciesId).length;
+    const shouldExpand = agent.energy > 48 && (agent.isLeader || agent.dna.curiosity > 0.46 || agent.dna.social > 0.58);
+
+    if (!shouldExpand) {
+      return null;
+    }
+
+    let nearest: LandPatch | null = null;
+    let nearestScore = Number.POSITIVE_INFINITY;
+
+    this.landPatches.forEach((patch) => {
+      const isOwn = patch.speciesId === agent.speciesId;
+
+      if (isOwn && patch.claimStrength > 0.75 && ownedCount > 2) {
+        return;
+      }
+
+      if (patch.speciesId && !isOwn && agent.energy < 64 && agent.dna.aggression < 0.48) {
+        return;
+      }
+
+      const agentDistance = Math.sqrt(distanceSquared(agent.position, patch.position));
+      const baseDistance = base ? Math.sqrt(distanceSquared(base.position, patch.position)) : 0;
+      const ownerPenalty = patch.speciesId && !isOwn ? 90 * (1 - agent.dna.aggression) : 0;
+      const ownPenalty = isOwn ? 120 + patch.claimStrength * 160 : 0;
+      const score = agentDistance + baseDistance * 0.24 + ownerPenalty + ownPenalty - patch.resourceLevel * 120;
+
+      if (score < nearestScore && agentDistance < 620 + agent.dna.vision * 360) {
+        nearest = patch;
+        nearestScore = score;
+      }
+    });
+
+    return nearest;
+  }
+
   private findSpeciesLeader(speciesId: string): Agent | null {
     const leaderId = this.species.find((species) => species.id === speciesId)?.leaderId;
     const leader = leaderId ? this.agents.find((agent) => agent.id === leaderId && agent.energy > 0) : null;
@@ -809,11 +969,16 @@ export class SimulationEngine {
     base: Base | null,
     food: Food | null,
     enemy: Agent | null,
+    territory: LandPatch | null,
     localAllies: number,
     localEnemies: number,
   ): AgentIntent {
     if (agent.carryingFood > 0 && base) {
       return 'deliver';
+    }
+
+    if (agent.energy < 64 && food) {
+      return 'forage';
     }
 
     if (enemy && this.isTruceActive(agent.speciesId, enemy.speciesId)) {
@@ -846,15 +1011,19 @@ export class SimulationEngine {
       return nearThreatenedBase ? 'defend' : 'attack';
     }
 
-    if (base && agent.energy < 42) {
+    if (territory && agent.energy > 50 && (!base || base.foodStock > 10 || agent.dna.curiosity > 0.62)) {
+      return 'claim';
+    }
+
+    if (base && agent.energy < 42 && base.foodStock > 0) {
       return 'shelter';
     }
 
-    if (food && (agent.energy < 88 || (base && base.foodStock < Math.max(42, base.population * 12)))) {
+    if (food && (agent.energy < 94 || (base && base.foodStock < Math.max(36, base.population * 7)))) {
       return 'forage';
     }
 
-    if (base && agent.dna.social > 0.72 && base.foodStock > 18) {
+    if (base && agent.dna.social > 0.78 && base.foodStock > 24 && !territory) {
       return 'shelter';
     }
 

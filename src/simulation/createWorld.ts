@@ -12,10 +12,10 @@ export const createWorld = (): World => ({
   waterLevel: 0.58,
 });
 
-export const createInitialSpecies = (): Species => ({
-  id: 'species-0',
-  name: getSpeciesName(0),
-  color: getSpeciesColor(0),
+export const createInitialSpecies = (index = 0): Species => ({
+  id: `species-${index}`,
+  name: getSpeciesName(index),
+  color: getSpeciesColor(index),
   signature: createRandomDna(),
   population: 0,
   bornDay: 1,

@@ -66,6 +66,16 @@ export type TimelineEvent = {
   detail: string;
 };
 
+export type VisualEffectType = 'birth' | 'eat' | 'death';
+
+export type VisualEffect = {
+  id: number;
+  type: VisualEffectType;
+  position: Vector2;
+  tick: number;
+  speciesId?: string;
+};
+
 export type SimulationStats = {
   population: number;
   food: number;
@@ -83,6 +93,7 @@ export type SimulationSnapshot = {
   agents: Agent[];
   food: Food[];
   species: Species[];
+  visualEffects: VisualEffect[];
   stats: SimulationStats;
   timeline: TimelineEvent[];
 };

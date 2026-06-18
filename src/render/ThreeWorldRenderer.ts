@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Agent, SimulationSnapshot, World } from '../core/types';
+import type { Agent, SimulationSnapshot, VisualEffect, World } from '../core/types';
 
 const worldScale = 0.5;
 const maxVisibleCreatures = 160;
@@ -21,6 +21,12 @@ type CreatureRig = {
   rightArm: THREE.Mesh;
 };
 
+type EffectRig = {
+  root: THREE.Group;
+  ring: THREE.Mesh;
+  core: THREE.Mesh;
+};
+
 export class ThreeWorldRenderer {
   private readonly container: HTMLElement;
   private readonly renderer: THREE.WebGLRenderer;
@@ -29,6 +35,7 @@ export class ThreeWorldRenderer {
   private readonly target = new THREE.Vector3(0, 0, 0);
   private readonly foodMesh: THREE.InstancedMesh;
   private readonly creaturePool: CreatureRig[] = [];
+  private readonly effectPool: EffectRig[] = [];
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
   private readonly reusableMatrix = new THREE.Matrix4();
   private readonly reusableColor = new THREE.Color();
@@ -67,6 +74,7 @@ export class ThreeWorldRenderer {
     this.createWorldStage();
     this.createLights();
     this.createCreaturePool();
+    this.createEffectPool();
     this.attachNavigation();
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -80,6 +88,7 @@ export class ThreeWorldRenderer {
     this.updateCamera();
     this.updateFood(snapshot);
     this.updateCreatures(snapshot);
+    this.updateEffects(snapshot);
     this.animateWorld(snapshot.world.tick);
     this.renderer.render(this.scene, this.camera);
   }
@@ -225,25 +234,45 @@ export class ThreeWorldRenderer {
   }
 
   private createWorldStage() {
+    const ocean = new THREE.Mesh(
+      new THREE.PlaneGeometry(1900, 1900, 1, 1),
+      new THREE.MeshBasicMaterial({ color: '#0b2e35' }),
+    );
+    ocean.name = 'ocean-plane';
+    ocean.rotation.x = -Math.PI / 2;
+    ocean.position.y = -0.16;
+    this.scene.add(ocean);
+
+    const beach = new THREE.Mesh(
+      new THREE.CircleGeometry(660, 80),
+      new THREE.MeshStandardMaterial({ color: '#7d6c43', roughness: 0.98, metalness: 0 }),
+    );
+    beach.name = 'island-beach';
+    beach.rotation.x = -Math.PI / 2;
+    beach.scale.set(1.05, 0.86, 1);
+    beach.position.y = -0.06;
+    this.scene.add(beach);
+
     const terrainMaterial = new THREE.MeshStandardMaterial({
-      color: '#171d17',
+      color: '#183b24',
       roughness: 0.95,
       metalness: 0.02,
     });
-    const terrain = new THREE.Mesh(new THREE.PlaneGeometry(1200, 1200, 16, 16), terrainMaterial);
+    const terrain = new THREE.Mesh(new THREE.CircleGeometry(560, 96), terrainMaterial);
     terrain.name = 'living-terrain';
     terrain.rotation.x = -Math.PI / 2;
+    terrain.scale.set(1.03, 0.82, 1);
     this.scene.add(terrain);
 
-    const grid = new THREE.GridHelper(1200, 32, '#314437', '#1f2a24');
+    const grid = new THREE.GridHelper(1120, 32, '#315039', '#1f3226');
     grid.position.y = 0.18;
     this.scene.add(grid);
 
     for (let index = 0; index < 9; index += 1) {
       const material = new THREE.MeshBasicMaterial({
-        color: index % 2 === 0 ? '#27352d' : '#2f2b23',
+        color: index % 2 === 0 ? '#2d5c33' : '#334927',
         transparent: true,
-        opacity: 0.5,
+        opacity: 0.58,
         depthWrite: false,
       });
       const patch = new THREE.Mesh(new THREE.CircleGeometry(38 + (index % 4) * 18, 24), material);
@@ -252,6 +281,23 @@ export class ThreeWorldRenderer {
       patch.scale.set(1.8 + (index % 3) * 0.45, 0.65 + (index % 2) * 0.35, 1);
       patch.position.set(((index * 137) % 920) - 460, 0.25, ((index * 229) % 920) - 460);
       this.scene.add(patch);
+    }
+
+    for (let index = 0; index < 28; index += 1) {
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 2.2, 20, 5), this.getMaterial('#3a2417'));
+      const crown = new THREE.Mesh(new THREE.ConeGeometry(12 + (index % 3) * 3, 28, 7), this.getMaterial('#265c32'));
+      const palm = new THREE.Group();
+      const angle = index * 2.399;
+      const radius = 250 + (index % 9) * 36;
+      palm.name = 'palm';
+      palm.position.set(Math.cos(angle) * radius, 10, Math.sin(angle) * radius * 0.78);
+      palm.rotation.y = angle;
+      trunk.position.y = 8;
+      trunk.rotation.z = Math.sin(index) * 0.16;
+      crown.position.y = 24;
+      crown.rotation.z = Math.cos(index) * 0.18;
+      palm.add(trunk, crown);
+      this.scene.add(palm);
     }
 
     for (let index = 0; index < 5; index += 1) {
@@ -303,6 +349,36 @@ export class ThreeWorldRenderer {
     }
   }
 
+  private createEffectPool() {
+    for (let index = 0; index < 96; index += 1) {
+      const root = new THREE.Group();
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(6, 7.8, 24),
+        new THREE.MeshBasicMaterial({
+          color: '#86efac',
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          side: THREE.DoubleSide,
+        }),
+      );
+      const core = new THREE.Mesh(
+        new THREE.SphereGeometry(3.4, 10, 10),
+        new THREE.MeshBasicMaterial({
+          color: '#86efac',
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+        }),
+      );
+      ring.rotation.x = -Math.PI / 2;
+      root.visible = false;
+      root.add(ring, core);
+      this.effectPool.push({ root, ring, core });
+      this.scene.add(root);
+    }
+  }
+
   private createCreatureRig(): CreatureRig {
     const root = new THREE.Group();
     const bodyMaterial = new THREE.MeshStandardMaterial({
@@ -348,6 +424,7 @@ export class ThreeWorldRenderer {
   }
 
   private updateCreatures(snapshot: SimulationSnapshot) {
+    const eatingAgents = this.getEatingAgentIds(snapshot);
     const colors = new Map(snapshot.species.map((species) => [species.id, species.color]));
     const visibleAgents = snapshot.agents
       .filter((agent) => this.isVisible(agent.position.x, agent.position.y, snapshot.world, 130))
@@ -361,20 +438,21 @@ export class ThreeWorldRenderer {
         return;
       }
 
-      this.updateCreatureRig(rig, agent, colors.get(agent.speciesId) ?? '#b70913', snapshot.world, snapshot.world.tick);
+      this.updateCreatureRig(rig, agent, colors.get(agent.speciesId) ?? '#b70913', snapshot.world, snapshot.world.tick, eatingAgents.has(agent.id));
     });
   }
 
-  private updateCreatureRig(rig: CreatureRig, agent: Agent, color: string, world: World, tick: number) {
+  private updateCreatureRig(rig: CreatureRig, agent: Agent, color: string, world: World, tick: number, isEating: boolean) {
     const position = this.toScenePosition(agent.position.x, agent.position.y, world);
     const direction = Math.atan2(agent.velocity.x, agent.velocity.y || 0.001);
     const gait = Math.sin(tick * 0.12 + agent.id) * 0.6;
+    const chew = isEating ? Math.sin(tick * 0.85 + agent.id) * 0.8 : 0;
     const bodyScale = 0.82 + Math.min(0.32, agent.energy / 360);
     const widthScale = 0.82 + agent.dna.social * 0.45;
     const heightScale = 0.84 + agent.dna.fertility * 0.5;
 
     rig.root.visible = true;
-    rig.root.position.set(position.x, 15, position.z);
+    rig.root.position.set(position.x, 15 + (isEating ? Math.abs(chew) * 0.55 : 0), position.z);
     rig.root.rotation.y = direction;
     rig.root.scale.set(widthScale, bodyScale * heightScale, 1);
 
@@ -390,7 +468,7 @@ export class ThreeWorldRenderer {
       material.emissive.copy(limbColor).multiplyScalar(0.12);
     });
 
-    rig.body.position.set(0, 12, 0);
+    rig.body.position.set(0, 12 - (isEating ? Math.abs(chew) * 0.55 : 0), 0);
     rig.body.scale.set(1, 1, 1);
 
     const eyeSize = 0.78 + agent.dna.vision * 0.38;
@@ -399,15 +477,15 @@ export class ThreeWorldRenderer {
     rig.leftEye.scale.set(eyeSize, eyeSize, eyeSize);
     rig.rightEye.scale.set(eyeSize, eyeSize, eyeSize);
 
-    rig.mouth.position.set(0, 9.5, -7.4);
-    rig.mouth.scale.set(1 + agent.dna.aggression * 0.45, 1, 1);
+    rig.mouth.position.set(0, 9.5 - Math.abs(chew) * 0.7, -7.4);
+    rig.mouth.scale.set(1 + agent.dna.aggression * 0.45, isEating ? 1.45 : 1, 1);
 
     rig.leftLeg.position.set(-5.2, -4.5 + gait, 0);
     rig.rightLeg.position.set(5.2, -4.5 - gait, 0);
-    rig.leftArm.position.set(-12.5, 8 + gait * 2, 0);
-    rig.rightArm.position.set(12.5, 8 - gait * 2, 0);
-    rig.leftArm.rotation.z = 0.35 + gait * 0.35;
-    rig.rightArm.rotation.z = -0.35 - gait * 0.35;
+    rig.leftArm.position.set(-12.5, 8 + gait * 2, isEating ? -2.2 : 0);
+    rig.rightArm.position.set(12.5, 8 - gait * 2, isEating ? -2.2 : 0);
+    rig.leftArm.rotation.z = (isEating ? 0.75 : 0.35) + gait * 0.35;
+    rig.rightArm.rotation.z = (isEating ? -0.75 : -0.35) - gait * 0.35;
 
     const teethCount = 3 + Math.round(agent.dna.aggression * 3);
     for (let index = 0; index < 6; index += 1) {
@@ -420,6 +498,62 @@ export class ThreeWorldRenderer {
       rig.teeth.setMatrixAt(index, this.reusableMatrix);
     }
     rig.teeth.instanceMatrix.needsUpdate = true;
+  }
+
+  private updateEffects(snapshot: SimulationSnapshot) {
+    this.effectPool.forEach((rig, index) => {
+      const effect = snapshot.visualEffects[index];
+
+      if (!effect || !this.isVisible(effect.position.x, effect.position.y, snapshot.world, 180)) {
+        rig.root.visible = false;
+        return;
+      }
+
+      this.updateEffectRig(rig, effect, snapshot);
+    });
+  }
+
+  private updateEffectRig(rig: EffectRig, effect: VisualEffect, snapshot: SimulationSnapshot) {
+    const age = snapshot.world.tick - effect.tick;
+    const progress = Math.min(1, age / 96);
+    const position = this.toScenePosition(effect.position.x, effect.position.y, snapshot.world);
+    const color = effect.type === 'death' ? '#ff365b' : effect.type === 'eat' ? '#86efac' : '#f8d56b';
+    const ringMaterial = rig.ring.material as THREE.MeshBasicMaterial;
+    const coreMaterial = rig.core.material as THREE.MeshBasicMaterial;
+    const scale = effect.type === 'birth' ? 1 + progress * 3.8 : effect.type === 'eat' ? 0.7 + progress * 1.4 : 1 + progress * 2.6;
+    const opacity = Math.max(0, 1 - progress);
+
+    rig.root.visible = true;
+    rig.root.position.set(position.x, 4 + progress * 20, position.z);
+    rig.root.scale.setScalar(scale);
+    ringMaterial.color.set(color);
+    coreMaterial.color.set(color);
+    ringMaterial.opacity = opacity * (effect.type === 'death' ? 0.74 : 0.58);
+    coreMaterial.opacity = opacity * (effect.type === 'eat' ? 0.78 : 0.38);
+    rig.core.position.y = effect.type === 'death' ? progress * 18 : progress * 8;
+  }
+
+  private getEatingAgentIds(snapshot: SimulationSnapshot) {
+    const recentEatEffects = snapshot.visualEffects.filter((effect) => effect.type === 'eat' && snapshot.world.tick - effect.tick < 16);
+    const eatingAgents = new Set<number>();
+
+    recentEatEffects.forEach((effect) => {
+      const nearest = snapshot.agents.reduce<{ agent: Agent | null; distance: number }>(
+        (closest, agent) => {
+          const dx = agent.position.x - effect.position.x;
+          const dy = agent.position.y - effect.position.y;
+          const distance = dx * dx + dy * dy;
+          return distance < closest.distance ? { agent, distance } : closest;
+        },
+        { agent: null, distance: 48 * 48 },
+      );
+
+      if (nearest.agent) {
+        eatingAgents.add(nearest.agent.id);
+      }
+    });
+
+    return eatingAgents;
   }
 
   private animateWorld(tick: number) {

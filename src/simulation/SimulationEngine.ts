@@ -1,4 +1,4 @@
-import type { Agent, Dna, Food, SimulationSnapshot, SimulationStats, Species, TimelineEvent, World } from '../core/types';
+import type { Agent, Dna, Food, SimulationSnapshot, SimulationStats, Species, TimelineEvent, VisualEffect, World } from '../core/types';
 import { clamp, distanceSquared, normalize, randomRange, wrapPosition } from '../core/math';
 import { averageDna, blendDna, dnaDistance } from '../genetics/dna';
 import { createAgent, createFood, createInitialSpecies, createWorld } from './createWorld';
@@ -10,6 +10,8 @@ const dayLength = 58;
 const maxTimelineEvents = 24;
 const softPopulationLimit = 180;
 const maxBirthsPerStep = 6;
+const maxVisualEffects = 96;
+const visualEffectLifetime = 96;
 
 export class SimulationEngine {
   private world: World;
@@ -20,19 +22,27 @@ export class SimulationEngine {
   private nextAgentId = 1;
   private nextFoodId = 1;
   private nextTimelineId = 1;
+  private nextVisualEffectId = 1;
   private births = initialAgents;
   private deaths = 0;
   private reproductions = 0;
   private firstDeathLogged = false;
   private firstReproductionLogged = false;
+  private visualEffects: VisualEffect[] = [];
 
   constructor() {
     this.world = createWorld();
-    const firstSpecies = createInitialSpecies();
-    this.species = [firstSpecies];
-    this.agents = Array.from({ length: initialAgents }, () =>
-      createAgent(this.nextAgentId++, this.world, firstSpecies.id, 1, firstSpecies.signature),
-    );
+    const firstSpecies = createInitialSpecies(0);
+    const secondSpecies = createInitialSpecies(1);
+    this.species = [firstSpecies, secondSpecies];
+    this.agents = Array.from({ length: initialAgents }, (_, index) => {
+      const species = index % 2 === 0 ? firstSpecies : secondSpecies;
+      const agent = createAgent(this.nextAgentId++, this.world, species.id, 1, species.signature);
+      const side = index % 2 === 0 ? 0.34 : 0.66;
+      agent.position.x = randomRange(this.world.width * (side - 0.08), this.world.width * (side + 0.08));
+      agent.position.y = randomRange(this.world.height * 0.34, this.world.height * 0.66);
+      return agent;
+    });
     this.food = Array.from({ length: initialFood }, () => createFood(this.nextFoodId++, this.world));
     this.timeline = [
       {
@@ -40,9 +50,10 @@ export class SimulationEngine {
         day: 1,
         type: 'birth',
         title: 'Genesis event',
-        detail: '50 agents released into a young artificial world.',
+        detail: '50 agents from two species released onto a tropical island.',
       },
     ];
+    this.agents.forEach((agent) => this.addVisualEffect('birth', agent.position, agent.speciesId));
     this.updateSpeciesPopulation();
   }
 
@@ -56,11 +67,13 @@ export class SimulationEngine {
     this.nextAgentId = fresh.nextAgentId;
     this.nextFoodId = fresh.nextFoodId;
     this.nextTimelineId = fresh.nextTimelineId;
+    this.nextVisualEffectId = fresh.nextVisualEffectId;
     this.births = fresh.births;
     this.deaths = fresh.deaths;
     this.reproductions = fresh.reproductions;
     this.firstDeathLogged = false;
     this.firstReproductionLogged = false;
+    this.visualEffects = fresh.visualEffects;
   }
 
   step(iterations = 1) {
@@ -78,6 +91,7 @@ export class SimulationEngine {
       this.resolveEating();
       this.resolveReproduction();
       this.resolveMortality();
+      this.pruneVisualEffects();
       this.updateSpeciesPopulation();
     }
   }
@@ -88,6 +102,7 @@ export class SimulationEngine {
       agents: this.agents.map((agent) => ({ ...agent, position: { ...agent.position }, velocity: { ...agent.velocity } })),
       food: this.food.map((item) => ({ ...item, position: { ...item.position } })),
       species: this.species.map((item) => ({ ...item, signature: { ...item.signature } })),
+      visualEffects: this.visualEffects.map((effect) => ({ ...effect, position: { ...effect.position } })),
       stats: this.getStats(),
       timeline: [...this.timeline],
     };
@@ -153,6 +168,7 @@ export class SimulationEngine {
         eaten.add(foodItem.id);
         agent.energy = Math.min(120, agent.energy + foodItem.energy);
         agent.memory = [foodItem.position, ...agent.memory].slice(0, 5);
+        this.addVisualEffect('eat', foodItem.position, agent.speciesId);
       }
     });
 
@@ -199,6 +215,7 @@ export class SimulationEngine {
       children.push(child);
       this.births += 1;
       this.reproductions += 1;
+      this.addVisualEffect('birth', child.position, child.speciesId);
 
       if (!this.firstReproductionLogged) {
         this.firstReproductionLogged = true;
@@ -218,6 +235,10 @@ export class SimulationEngine {
       if (!survives && !this.firstDeathLogged) {
         this.firstDeathLogged = true;
         this.addTimelineEvent('death', 'First death', `Agent #${agent.id} left the population on day ${this.world.day}.`);
+      }
+
+      if (!survives) {
+        this.addVisualEffect('death', agent.position, agent.speciesId);
       }
 
       return survives;
@@ -345,6 +366,23 @@ export class SimulationEngine {
       },
       ...this.timeline,
     ].slice(0, maxTimelineEvents);
+  }
+
+  private addVisualEffect(type: VisualEffect['type'], position: Agent['position'], speciesId?: string) {
+    this.visualEffects = [
+      {
+        id: this.nextVisualEffectId++,
+        type,
+        position: { ...position },
+        tick: this.world.tick,
+        speciesId,
+      },
+      ...this.visualEffects,
+    ].slice(0, maxVisualEffects);
+  }
+
+  private pruneVisualEffects() {
+    this.visualEffects = this.visualEffects.filter((effect) => this.world.tick - effect.tick < visualEffectLifetime);
   }
 
   private getStats(): SimulationStats {

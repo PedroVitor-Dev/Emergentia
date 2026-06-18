@@ -6,6 +6,7 @@ const maxVisibleCreatures = 160;
 const maxVisibleFood = 640;
 const minZoom = 0.45;
 const maxZoom = 3.4;
+const keyboardPanSpeed = 460;
 
 type CreatureRig = {
   root: THREE.Group;
@@ -26,13 +27,13 @@ export class ThreeWorldRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
   private readonly target = new THREE.Vector3(0, 0, 0);
-  private readonly rayPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
   private readonly foodMesh: THREE.InstancedMesh;
   private readonly creaturePool: CreatureRig[] = [];
   private readonly materials = new Map<string, THREE.MeshStandardMaterial>();
   private readonly reusableMatrix = new THREE.Matrix4();
   private readonly reusableColor = new THREE.Color();
   private readonly resizeObserver: ResizeObserver;
+  private readonly pressedKeys = new Set<string>();
   private readonly pointer = {
     active: false,
     lastX: 0,
@@ -42,6 +43,7 @@ export class ThreeWorldRenderer {
   private zoom = 1.05;
   private width = 1;
   private height = 1;
+  private lastNavigationTime = performance.now();
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -73,6 +75,8 @@ export class ThreeWorldRenderer {
   }
 
   render(snapshot: SimulationSnapshot) {
+    this.updateKeyboardNavigation(snapshot.world);
+    this.clampTargetToWorld(snapshot.world);
     this.updateCamera();
     this.updateFood(snapshot);
     this.updateCreatures(snapshot);
@@ -86,6 +90,8 @@ export class ThreeWorldRenderer {
     this.container.removeEventListener('pointermove', this.handlePointerMove);
     window.removeEventListener('pointerup', this.handlePointerUp);
     this.container.removeEventListener('wheel', this.handleWheel);
+    window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('keyup', this.handleKeyUp);
     this.renderer.dispose();
     this.renderer.domElement.remove();
   }
@@ -117,6 +123,8 @@ export class ThreeWorldRenderer {
     this.container.addEventListener('pointermove', this.handlePointerMove);
     window.addEventListener('pointerup', this.handlePointerUp);
     this.container.addEventListener('wheel', this.handleWheel, { passive: false });
+    window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('keyup', this.handleKeyUp);
   }
 
   private handlePointerDown = (event: PointerEvent) => {
@@ -150,6 +158,71 @@ export class ThreeWorldRenderer {
     const direction = event.deltaY > 0 ? -1 : 1;
     this.zoom = THREE.MathUtils.clamp(this.zoom + direction * 0.14 * this.zoom, minZoom, maxZoom);
   };
+
+  private handleKeyDown = (event: KeyboardEvent) => {
+    if (this.isTypingTarget(event.target)) {
+      return;
+    }
+
+    const key = event.key.toLowerCase();
+
+    if (['w', 'a', 's', 'd'].includes(key)) {
+      event.preventDefault();
+      this.pressedKeys.add(key);
+    }
+  };
+
+  private handleKeyUp = (event: KeyboardEvent) => {
+    this.pressedKeys.delete(event.key.toLowerCase());
+  };
+
+  private updateKeyboardNavigation(world: World) {
+    const now = performance.now();
+    const deltaSeconds = Math.min(0.08, (now - this.lastNavigationTime) / 1000);
+    this.lastNavigationTime = now;
+
+    if (this.pressedKeys.size === 0) {
+      return;
+    }
+
+    const direction = new THREE.Vector2(0, 0);
+
+    if (this.pressedKeys.has('w')) direction.y -= 1;
+    if (this.pressedKeys.has('s')) direction.y += 1;
+    if (this.pressedKeys.has('a')) direction.x -= 1;
+    if (this.pressedKeys.has('d')) direction.x += 1;
+
+    if (direction.lengthSq() === 0) {
+      return;
+    }
+
+    direction.normalize();
+    const movement = (keyboardPanSpeed * deltaSeconds) / this.zoom;
+    this.target.x += direction.x * movement;
+    this.target.z += direction.y * movement;
+    this.clampTargetToWorld(world);
+  }
+
+  private clampTargetToWorld(world: World) {
+    const worldHalfWidth = (world.width * worldScale) / 2;
+    const worldHalfHeight = (world.height * worldScale) / 2;
+    const aspect = this.width / this.height;
+    const halfViewHeight = this.viewSize / this.zoom / 2;
+    const halfViewWidth = halfViewHeight * aspect;
+    const horizontalLimit = Math.max(0, worldHalfWidth - halfViewWidth * 0.55);
+    const verticalLimit = Math.max(0, worldHalfHeight - halfViewHeight * 0.55);
+
+    this.target.x = THREE.MathUtils.clamp(this.target.x, -horizontalLimit, horizontalLimit);
+    this.target.z = THREE.MathUtils.clamp(this.target.z, -verticalLimit, verticalLimit);
+  }
+
+  private isTypingTarget(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) {
+      return false;
+    }
+
+    return target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName);
+  }
 
   private createWorldStage() {
     const terrainMaterial = new THREE.MeshStandardMaterial({

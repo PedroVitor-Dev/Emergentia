@@ -95,7 +95,7 @@ export const App = () => {
           <div>
             <span className="eyebrow">Artificial Life Laboratory</span>
             <h1>Emergentia</h1>
-            <span className="viewport-hint">WASD to roam. Drag to pan. Wheel to descend.</span>
+            <span className="viewport-hint">WASD to walk. Drag to look. Wheel changes height.</span>
           </div>
           <div className="control-strip" aria-label="Simulation controls">
             <button

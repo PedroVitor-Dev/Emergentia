@@ -4,9 +4,11 @@ import type { Agent, SimulationSnapshot, VisualEffect, World } from '../core/typ
 const worldScale = 0.5;
 const maxVisibleCreatures = 160;
 const maxVisibleFood = 640;
-const minZoom = 0.45;
-const maxZoom = 3.4;
-const keyboardPanSpeed = 460;
+const cameraMoveSpeed = 170;
+const cameraMinHeight = 32;
+const cameraMaxHeight = 260;
+const cameraCreatureRadius = 38;
+const cameraViewDistance = 620;
 
 type CreatureRig = {
   root: THREE.Group;
@@ -31,8 +33,8 @@ export class ThreeWorldRenderer {
   private readonly container: HTMLElement;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 5000);
-  private readonly target = new THREE.Vector3(0, 0, 0);
+  private readonly camera = new THREE.PerspectiveCamera(58, 1, 2, 2600);
+  private readonly cameraPosition = new THREE.Vector3(0, 95, 440);
   private readonly foodMesh: THREE.InstancedMesh;
   private readonly creaturePool: CreatureRig[] = [];
   private readonly effectPool: EffectRig[] = [];
@@ -46,8 +48,8 @@ export class ThreeWorldRenderer {
     lastX: 0,
     lastY: 0,
   };
-  private viewSize = 760;
-  private zoom = 1.05;
+  private yaw = 0;
+  private pitch = -0.36;
   private width = 1;
   private height = 1;
   private lastNavigationTime = performance.now();
@@ -65,8 +67,8 @@ export class ThreeWorldRenderer {
     this.renderer.domElement.className = 'webgl-canvas';
     this.container.appendChild(this.renderer.domElement);
 
-    this.scene.background = new THREE.Color('#070908');
-    this.scene.fog = new THREE.FogExp2('#070908', 0.00075);
+    this.scene.background = new THREE.Color('#7fcfe4');
+    this.scene.fog = new THREE.Fog('#7fcfe4', 520, 1750);
 
     this.foodMesh = this.createFoodMesh();
     this.scene.add(this.foodMesh);
@@ -84,7 +86,8 @@ export class ThreeWorldRenderer {
 
   render(snapshot: SimulationSnapshot) {
     this.updateKeyboardNavigation(snapshot.world);
-    this.clampTargetToWorld(snapshot.world);
+    this.keepCameraAwayFromAgents(snapshot);
+    this.clampCameraToWorld(snapshot.world);
     this.updateCamera();
     this.updateFood(snapshot);
     this.updateCreatures(snapshot);
@@ -114,16 +117,12 @@ export class ThreeWorldRenderer {
   }
 
   private updateCamera() {
-    const aspect = this.width / this.height;
-    const halfHeight = this.viewSize / this.zoom / 2;
-    const halfWidth = halfHeight * aspect;
-
-    this.camera.left = -halfWidth;
-    this.camera.right = halfWidth;
-    this.camera.top = halfHeight;
-    this.camera.bottom = -halfHeight;
-    this.camera.position.set(this.target.x, 720 / this.zoom, this.target.z + 620 / this.zoom);
-    this.camera.lookAt(this.target);
+    this.camera.aspect = this.width / this.height;
+    this.camera.position.copy(this.cameraPosition);
+    this.camera.rotation.order = 'YXZ';
+    this.camera.rotation.y = this.yaw;
+    this.camera.rotation.x = this.pitch;
+    this.camera.rotation.z = 0;
     this.camera.updateProjectionMatrix();
   }
 
@@ -150,10 +149,10 @@ export class ThreeWorldRenderer {
 
     const dx = event.clientX - this.pointer.lastX;
     const dy = event.clientY - this.pointer.lastY;
-    const panSpeed = 1.75 / this.zoom;
+    const lookSensitivity = 0.0032;
 
-    this.target.x -= dx * panSpeed;
-    this.target.z -= dy * panSpeed;
+    this.yaw -= dx * lookSensitivity;
+    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * lookSensitivity, -1.12, -0.08);
     this.pointer.lastX = event.clientX;
     this.pointer.lastY = event.clientY;
   };
@@ -164,8 +163,8 @@ export class ThreeWorldRenderer {
 
   private handleWheel = (event: WheelEvent) => {
     event.preventDefault();
-    const direction = event.deltaY > 0 ? -1 : 1;
-    this.zoom = THREE.MathUtils.clamp(this.zoom + direction * 0.14 * this.zoom, minZoom, maxZoom);
+    const direction = event.deltaY > 0 ? 1 : -1;
+    this.cameraPosition.y = THREE.MathUtils.clamp(this.cameraPosition.y + direction * 12, cameraMinHeight, cameraMaxHeight);
   };
 
   private handleKeyDown = (event: KeyboardEvent) => {
@@ -194,35 +193,55 @@ export class ThreeWorldRenderer {
       return;
     }
 
-    const direction = new THREE.Vector2(0, 0);
+    const direction = new THREE.Vector3(0, 0, 0);
 
-    if (this.pressedKeys.has('w')) direction.y -= 1;
-    if (this.pressedKeys.has('s')) direction.y += 1;
-    if (this.pressedKeys.has('a')) direction.x -= 1;
-    if (this.pressedKeys.has('d')) direction.x += 1;
+    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+
+    if (this.pressedKeys.has('w')) direction.add(forward);
+    if (this.pressedKeys.has('s')) direction.sub(forward);
+    if (this.pressedKeys.has('a')) direction.sub(right);
+    if (this.pressedKeys.has('d')) direction.add(right);
 
     if (direction.lengthSq() === 0) {
       return;
     }
 
     direction.normalize();
-    const movement = (keyboardPanSpeed * deltaSeconds) / this.zoom;
-    this.target.x += direction.x * movement;
-    this.target.z += direction.y * movement;
-    this.clampTargetToWorld(world);
+    const heightScale = THREE.MathUtils.clamp(this.cameraPosition.y / 110, 0.72, 1.9);
+    const movement = cameraMoveSpeed * heightScale * deltaSeconds;
+    this.cameraPosition.addScaledVector(direction, movement);
+    this.clampCameraToWorld(world);
   }
 
-  private clampTargetToWorld(world: World) {
+  private clampCameraToWorld(world: World) {
     const worldHalfWidth = (world.width * worldScale) / 2;
     const worldHalfHeight = (world.height * worldScale) / 2;
-    const aspect = this.width / this.height;
-    const halfViewHeight = this.viewSize / this.zoom / 2;
-    const halfViewWidth = halfViewHeight * aspect;
-    const horizontalLimit = Math.max(0, worldHalfWidth - halfViewWidth * 0.55);
-    const verticalLimit = Math.max(0, worldHalfHeight - halfViewHeight * 0.55);
+    const horizontalLimit = worldHalfWidth * 0.88;
+    const verticalLimit = worldHalfHeight * 0.88;
 
-    this.target.x = THREE.MathUtils.clamp(this.target.x, -horizontalLimit, horizontalLimit);
-    this.target.z = THREE.MathUtils.clamp(this.target.z, -verticalLimit, verticalLimit);
+    this.cameraPosition.x = THREE.MathUtils.clamp(this.cameraPosition.x, -horizontalLimit, horizontalLimit);
+    this.cameraPosition.z = THREE.MathUtils.clamp(this.cameraPosition.z, -verticalLimit, verticalLimit);
+    this.cameraPosition.y = THREE.MathUtils.clamp(this.cameraPosition.y, cameraMinHeight, cameraMaxHeight);
+  }
+
+  private keepCameraAwayFromAgents(snapshot: SimulationSnapshot) {
+    const camera2D = new THREE.Vector2(this.cameraPosition.x, this.cameraPosition.z);
+
+    snapshot.agents.forEach((agent) => {
+      const position = this.toScenePosition(agent.position.x, agent.position.y, snapshot.world);
+      const agent2D = new THREE.Vector2(position.x, position.z);
+      const distance = camera2D.distanceTo(agent2D);
+
+      if (distance <= 0 || distance >= cameraCreatureRadius) {
+        return;
+      }
+
+      const push = camera2D.sub(agent2D).normalize().multiplyScalar(cameraCreatureRadius - distance);
+      this.cameraPosition.x += push.x;
+      this.cameraPosition.z += push.y;
+      camera2D.set(this.cameraPosition.x, this.cameraPosition.z);
+    });
   }
 
   private isTypingTarget(target: EventTarget | null) {
@@ -266,6 +285,7 @@ export class ThreeWorldRenderer {
 
     const grid = new THREE.GridHelper(1120, 32, '#315039', '#1f3226');
     grid.position.y = 0.18;
+    grid.visible = false;
     this.scene.add(grid);
 
     for (let index = 0; index < 9; index += 1) {
@@ -298,6 +318,34 @@ export class ThreeWorldRenderer {
       crown.rotation.z = Math.cos(index) * 0.18;
       palm.add(trunk, crown);
       this.scene.add(palm);
+    }
+
+    for (let index = 0; index < 22; index += 1) {
+      const angle = index * 1.718;
+      const radius = 120 + (index % 8) * 46;
+      const rock = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(8 + (index % 4) * 3, 0),
+        this.getMaterial(index % 2 === 0 ? '#706b5b' : '#544f46'),
+      );
+      rock.name = 'volcanic-rock';
+      rock.position.set(Math.cos(angle) * radius, 5, Math.sin(angle) * radius * 0.8);
+      rock.rotation.set(index * 0.31, index * 0.77, index * 0.19);
+      rock.scale.set(1.2, 0.5 + (index % 3) * 0.25, 0.9);
+      this.scene.add(rock);
+    }
+
+    for (let index = 0; index < 10; index += 1) {
+      const mound = new THREE.Mesh(
+        new THREE.ConeGeometry(42 + (index % 4) * 18, 16 + (index % 3) * 8, 18),
+        this.getMaterial(index % 2 === 0 ? '#24472b' : '#2e542d'),
+      );
+      const angle = index * 2.071;
+      const radius = 90 + (index % 6) * 58;
+      mound.name = 'jungle-mound';
+      mound.position.set(Math.cos(angle) * radius, 6, Math.sin(angle) * radius * 0.75);
+      mound.rotation.y = angle;
+      mound.scale.z = 0.55 + (index % 2) * 0.3;
+      this.scene.add(mound);
     }
 
     for (let index = 0; index < 5; index += 1) {
@@ -571,16 +619,9 @@ export class ThreeWorldRenderer {
 
   private isVisible(x: number, y: number, world: World, margin: number) {
     const position = this.toScenePosition(x, y, world);
-    const aspect = this.width / this.height;
-    const halfHeight = this.viewSize / this.zoom / 2 + margin;
-    const halfWidth = halfHeight * aspect + margin;
+    const distance = Math.hypot(position.x - this.cameraPosition.x, position.z - this.cameraPosition.z);
 
-    return (
-      position.x >= this.target.x - halfWidth &&
-      position.x <= this.target.x + halfWidth &&
-      position.z >= this.target.z - halfHeight &&
-      position.z <= this.target.z + halfHeight
-    );
+    return distance <= cameraViewDistance + margin;
   }
 
   private toScenePosition(x: number, y: number, world: World) {

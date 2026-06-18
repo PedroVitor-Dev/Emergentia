@@ -1,7 +1,7 @@
 import { Activity, Pause, Play, RotateCcw, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SimulationSnapshot } from '../core/types';
-import { renderSimulation } from '../render/canvasRenderer';
+import { ThreeWorldRenderer } from '../render/ThreeWorldRenderer';
 import { SimulationEngine } from '../simulation/SimulationEngine';
 import { MetricCard } from './MetricCard';
 import { SpeciesList } from './SpeciesList';
@@ -12,11 +12,29 @@ const dashboardFrameMs = 250;
 
 export const App = () => {
   const engineRef = useRef(new SimulationEngine());
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const worldHostRef = useRef<HTMLDivElement | null>(null);
+  const rendererRef = useRef<ThreeWorldRenderer | null>(null);
   const snapshotRef = useRef<SimulationSnapshot>(engineRef.current.getSnapshot());
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [snapshot, setSnapshot] = useState<SimulationSnapshot>(() => snapshotRef.current);
+
+  useEffect(() => {
+    const host = worldHostRef.current;
+
+    if (!host) {
+      return undefined;
+    }
+
+    const renderer = new ThreeWorldRenderer(host);
+    rendererRef.current = renderer;
+    renderer.render(snapshotRef.current);
+
+    return () => {
+      renderer.dispose();
+      rendererRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -37,11 +55,8 @@ export const App = () => {
 
       const nextSnapshot = engineRef.current.getSnapshot();
       snapshotRef.current = nextSnapshot;
-      const canvas = canvasRef.current;
 
-      if (canvas) {
-        renderSimulation(canvas, nextSnapshot);
-      }
+      rendererRef.current?.render(nextSnapshot);
 
       if (time - lastDashboardTime >= dashboardFrameMs) {
         lastDashboardTime = time;
@@ -75,11 +90,12 @@ export const App = () => {
   return (
     <main className="app-shell">
       <section className="lab-stage" aria-label="Emergentia simulation viewport">
-        <canvas ref={canvasRef} className="world-canvas" />
+        <div ref={worldHostRef} className="world-canvas world-canvas--three" />
         <div className="stage-overlay">
           <div>
             <span className="eyebrow">Artificial Life Laboratory</span>
             <h1>Emergentia</h1>
+            <span className="viewport-hint">Drag to roam. Wheel to descend.</span>
           </div>
           <div className="control-strip" aria-label="Simulation controls">
             <button

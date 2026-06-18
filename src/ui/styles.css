@@ -56,6 +56,21 @@ button {
   height: 100%;
 }
 
+.world-canvas--three {
+  cursor: grab;
+  touch-action: none;
+}
+
+.world-canvas--three:active {
+  cursor: grabbing;
+}
+
+.webgl-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .stage-overlay {
   position: absolute;
   top: 0;
@@ -91,6 +106,14 @@ h1 {
   font-size: clamp(2.3rem, 5vw, 5.8rem);
   line-height: 0.95;
   letter-spacing: 0;
+}
+
+.viewport-hint {
+  display: inline-block;
+  margin-top: 12px;
+  color: rgba(237, 245, 239, 0.68);
+  font-size: 0.82rem;
+  font-weight: 700;
 }
 
 .control-strip {

@@ -44,6 +44,32 @@ type SpeciesRelation = {
   lastMessageTick: number;
 };
 
+type LeaderPlan = 'forage' | 'expand' | 'fortify' | 'negotiate' | 'threaten' | 'war' | 'recover';
+
+type LeaderMemory = {
+  plan: LeaderPlan;
+  targetSpeciesId: string | null;
+  targetTerritoryId: number | null;
+  urgency: number;
+  lastUpdatedTick: number;
+};
+
+type LeaderReport = {
+  species: Species;
+  leader: Agent | null;
+  base: Base | null;
+  population: number;
+  averageEnergy: number;
+  foodStock: number;
+  hunger: number;
+  threat: number;
+  ownedTerritories: number;
+  contestedTerritories: number;
+  resourcePressure: number;
+  military: number;
+  ambition: number;
+};
+
 export class SimulationEngine {
   private world: World;
   private agents: Agent[];
@@ -73,6 +99,7 @@ export class SimulationEngine {
   private firstRallyLogged = false;
   private visualEffects: VisualEffect[] = [];
   private relations = new Map<string, SpeciesRelation>();
+  private leaderMemories = new Map<string, LeaderMemory>();
 
   constructor() {
     this.world = createWorld();
@@ -142,6 +169,7 @@ export class SimulationEngine {
     this.firstRallyLogged = false;
     this.visualEffects = fresh.visualEffects;
     this.relations = fresh.relations;
+    this.leaderMemories = fresh.leaderMemories;
   }
 
   step(iterations = 1) {
@@ -1101,38 +1129,271 @@ export class SimulationEngine {
   }
 
   private resolveLeaderDiplomacy() {
+    const reports = new Map(this.species.map((species) => [species.id, this.createLeaderReport(species)]));
+
+    reports.forEach((report) => {
+      const plan = this.chooseLeaderPlan(report, reports);
+      const previous = this.leaderMemories.get(report.species.id);
+      this.leaderMemories.set(report.species.id, { ...plan, lastUpdatedTick: this.world.tick });
+
+      if (previous?.plan !== plan.plan || this.world.tick - (previous?.lastUpdatedTick ?? -9999) > dayLength * 4) {
+        this.broadcastLeaderPlan(report, plan);
+      }
+
+      this.applyLeaderPlan(report, plan);
+    });
+
     this.relations.forEach((relation, key) => {
-      if (this.world.tick - relation.lastMessageTick < dayLength * 2) {
+      if (this.world.tick - relation.lastMessageTick < dayLength * 2.5) {
         return;
       }
 
       const [speciesA, speciesB] = key.split(':');
-      const leaderA = this.findSpeciesLeader(speciesA);
-      const leaderB = this.findSpeciesLeader(speciesB);
+      const reportA = reports.get(speciesA);
+      const reportB = reports.get(speciesB);
 
-      if (!leaderA || !leaderB) {
+      if (!reportA?.leader || !reportB?.leader) {
         return;
       }
 
-      if (relation.truceUntil > this.world.tick && relation.tension < 8) {
+      const planA = this.leaderMemories.get(speciesA);
+      const planB = this.leaderMemories.get(speciesB);
+      const shouldBargain = (reportA.hunger > 0.62 && reportB.ownedTerritories > reportA.ownedTerritories) || relation.truceUntil > this.world.tick;
+
+      if (shouldBargain && relation.tension < 13 && planA?.plan !== 'war') {
         relation.lastMessageTick = this.world.tick;
-        this.addLeaderMessage(speciesA, speciesB, 'peace', 'Keep the paths open. Our young need food, not ashes.', 'Mantenham os caminhos abertos. Nossos jovens precisam de comida, nao cinzas.');
+        this.addLeaderMessage(
+          speciesA,
+          speciesB,
+          'trade',
+          'Food is low. Leave the groves open and our claws stay closed.',
+          'A comida esta baixa. Deixem os pomares abertos e nossas garras ficam fechadas.',
+          'resource pact',
+        );
         return;
       }
 
-      if (relation.tension > 18) {
+      if (relation.tension > 21 || planA?.plan === 'war') {
         relation.lastMessageTick = this.world.tick;
-        this.addLeaderMessage(speciesA, speciesB, 'war', 'Your steps are too close to our crown.', 'Seus passos estao perto demais da nossa coroa.');
+        this.addLeaderMessage(
+          speciesA,
+          speciesB,
+          'war',
+          'The map remembers every bite you stole. Return the ground or meet us under the torches.',
+          'O mapa lembra cada mordida que voces roubaram. Devolvam o chao ou nos encontrem sob as tochas.',
+          'war demand',
+        );
         return;
       }
 
-      const baseA = this.bases.find((base) => base.speciesId === speciesA);
-
-      if (baseA && baseA.threatLevel > baseA.population * 0.28) {
+      if (reportA.threat > 0.3 && planB?.plan !== 'negotiate') {
         relation.lastMessageTick = this.world.tick;
-        this.addLeaderMessage(speciesA, speciesB, 'warning', 'Leave the castle line or we answer together.', 'Saiam da linha do castelo ou responderemos juntos.');
+        this.addLeaderMessage(
+          speciesA,
+          speciesB,
+          'warning',
+          'Your shadows are inside our castle wind. Pull back before the small ones learn fear.',
+          'Suas sombras ja entram no vento do nosso castelo. Recuem antes que os pequenos aprendam o medo.',
+          'border warning',
+        );
       }
     });
+  }
+
+  private createLeaderReport(species: Species): LeaderReport {
+    const members = this.agents.filter((agent) => agent.speciesId === species.id);
+    const base = this.bases.find((item) => item.speciesId === species.id) ?? null;
+    const leader = this.findSpeciesLeader(species.id);
+    const totalEnergy = members.reduce((sum, agent) => sum + agent.energy, 0);
+    const averageEnergy = members.length ? totalEnergy / members.length : 0;
+    const ownedTerritories = this.landPatches.filter((patch) => patch.speciesId === species.id).length;
+    const contestedTerritories = this.landPatches.filter((patch) => {
+      if (patch.speciesId !== species.id) {
+        return false;
+      }
+
+      return this.agents.some(
+        (agent) => agent.speciesId !== species.id && distanceSquared(agent.position, patch.position) < (patch.radius + territoryClaimRadius) ** 2,
+      );
+    }).length;
+    const aggression = members.length ? members.reduce((sum, agent) => sum + agent.dna.aggression, 0) / members.length : species.signature.aggression;
+    const social = members.length ? members.reduce((sum, agent) => sum + agent.dna.social, 0) / members.length : species.signature.social;
+    const curiosity = members.length ? members.reduce((sum, agent) => sum + agent.dna.curiosity, 0) / members.length : species.signature.curiosity;
+    const foodStock = base?.foodStock ?? 0;
+    const hunger = clamp((74 - averageEnergy) / 48 + Math.max(0, members.length * 4 - foodStock) / Math.max(24, members.length * 10), 0, 1);
+    const threat = base ? clamp(base.threatLevel / Math.max(3, members.length * 0.35), 0, 1) : 0;
+    const resourcePressure = clamp(1 - (ownedTerritories * 0.18 + foodStock / Math.max(60, members.length * 8)), 0, 1);
+    const military = clamp((members.length / Math.max(1, this.agents.length)) * 0.45 + aggression * 0.35 + averageEnergy / 300, 0, 1);
+    const ambition = clamp(curiosity * 0.45 + aggression * 0.28 + social * 0.2 + resourcePressure * 0.35, 0, 1);
+
+    return {
+      species,
+      leader,
+      base,
+      population: members.length,
+      averageEnergy,
+      foodStock,
+      hunger,
+      threat,
+      ownedTerritories,
+      contestedTerritories,
+      resourcePressure,
+      military,
+      ambition,
+    };
+  }
+
+  private chooseLeaderPlan(report: LeaderReport, reports: Map<string, LeaderReport>): Omit<LeaderMemory, 'lastUpdatedTick'> {
+    const rivals = [...reports.values()].filter((item) => item.species.id !== report.species.id);
+    const strongestRival = rivals.sort((a, b) => b.military + b.ownedTerritories * 0.03 - (a.military + a.ownedTerritories * 0.03))[0] ?? null;
+    const weakestRival = rivals.sort((a, b) => a.military - b.military)[0] ?? strongestRival;
+    const targetTerritory = this.findStrategicTerritory(report);
+
+    if (report.population <= 4 || report.averageEnergy < 34) {
+      return { plan: 'recover', targetSpeciesId: null, targetTerritoryId: targetTerritory?.id ?? null, urgency: 0.92 };
+    }
+
+    if (report.hunger > 0.72 || report.foodStock < Math.max(8, report.population * 1.8)) {
+      return { plan: 'forage', targetSpeciesId: strongestRival?.species.id ?? null, targetTerritoryId: targetTerritory?.id ?? null, urgency: report.hunger };
+    }
+
+    if (report.threat > 0.42 || report.contestedTerritories > 1) {
+      return { plan: 'fortify', targetSpeciesId: strongestRival?.species.id ?? null, targetTerritoryId: null, urgency: Math.max(report.threat, 0.65) };
+    }
+
+    if (strongestRival && report.military < strongestRival.military * 0.78 && report.species.signature.social > 0.45) {
+      return { plan: 'negotiate', targetSpeciesId: strongestRival.species.id, targetTerritoryId: null, urgency: 0.56 };
+    }
+
+    if (weakestRival && report.military > weakestRival.military * 1.22 && report.ambition > 0.62) {
+      return { plan: 'war', targetSpeciesId: weakestRival.species.id, targetTerritoryId: targetTerritory?.id ?? null, urgency: report.ambition };
+    }
+
+    if (targetTerritory && (report.resourcePressure > 0.35 || report.ambition > 0.52)) {
+      return { plan: 'expand', targetSpeciesId: targetTerritory.speciesId, targetTerritoryId: targetTerritory.id, urgency: Math.max(report.resourcePressure, report.ambition) };
+    }
+
+    return { plan: 'negotiate', targetSpeciesId: strongestRival?.species.id ?? null, targetTerritoryId: null, urgency: 0.34 };
+  }
+
+  private broadcastLeaderPlan(report: LeaderReport, plan: Omit<LeaderMemory, 'lastUpdatedTick'>) {
+    const targetSpecies = plan.targetSpeciesId ? this.getSpeciesLabel(plan.targetSpeciesId) : null;
+    const territory = plan.targetTerritoryId ? this.landPatches.find((patch) => patch.id === plan.targetTerritoryId) : null;
+
+    if (plan.plan === 'forage') {
+      this.addLeaderMessage(
+        report.species.id,
+        plan.targetSpeciesId,
+        'strategy',
+        `No feasts until the cellars breathe again. Spread out, mark fruit, carry it home.`,
+        `Sem banquete ate os celeiros respirarem de novo. Espalhem-se, marquem frutas, tragam para casa.`,
+        'forage order',
+      );
+      return;
+    }
+
+    if (plan.plan === 'expand') {
+      this.addLeaderMessage(
+        report.species.id,
+        territory?.speciesId ?? null,
+        'rally',
+        `The ${targetSpecies ? `${targetSpecies} border` : 'silent ground'} is soft. We take it with feet before teeth.`,
+        `${targetSpecies ? `A fronteira de ${targetSpecies}` : 'O chao silencioso'} esta mole. Tomamos com os pes antes dos dentes.`,
+        'expansion order',
+      );
+      return;
+    }
+
+    if (plan.plan === 'fortify') {
+      this.addLeaderMessage(
+        report.species.id,
+        plan.targetSpeciesId,
+        'warning',
+        `Close the rings around the castle. Nobody crosses hungry, nobody crosses armed.`,
+        `Fechem os aneis ao redor do castelo. Ninguem cruza com fome, ninguem cruza armado.`,
+        'fortify order',
+      );
+      return;
+    }
+
+    if (plan.plan === 'war') {
+      this.addLeaderMessage(
+        report.species.id,
+        plan.targetSpeciesId,
+        'war',
+        `Tonight we count courage, not apples. ${targetSpecies ?? 'The rival'} will learn where our map ends.`,
+        `Hoje contamos coragem, nao macas. ${targetSpecies ?? 'O rival'} vai aprender onde nosso mapa termina.`,
+        'war council',
+      );
+      return;
+    }
+
+    if (plan.plan === 'recover') {
+      this.addLeaderMessage(
+        report.species.id,
+        null,
+        'peace',
+        `Small steps. No raids. Feed the weak first and let the wounded sleep near the fire.`,
+        `Passos pequenos. Sem invasoes. Alimentem os fracos primeiro e deixem os feridos dormir perto do fogo.`,
+        'recovery order',
+      );
+      return;
+    }
+
+    this.addLeaderMessage(
+      report.species.id,
+      plan.targetSpeciesId,
+      'peace',
+      `We can share silence for a while. A quiet border grows more food than a loud one.`,
+      `Podemos dividir o silencio por um tempo. Uma fronteira calma cria mais comida que uma barulhenta.`,
+      'peace offer',
+    );
+  }
+
+  private applyLeaderPlan(report: LeaderReport, plan: Omit<LeaderMemory, 'lastUpdatedTick'>) {
+    if (plan.plan === 'war' && plan.targetSpeciesId) {
+      this.adjustTension(report.species.id, plan.targetSpeciesId, 1.7 + plan.urgency);
+    }
+
+    if (plan.plan === 'negotiate' && plan.targetSpeciesId) {
+      const relation = this.getRelation(report.species.id, plan.targetSpeciesId);
+      relation.tension = Math.max(0, relation.tension - 1.2);
+      if (report.hunger < 0.5 && relation.tension < 9) {
+        relation.truceUntil = Math.max(relation.truceUntil, this.world.tick + dayLength * 3);
+      }
+    }
+
+    if (plan.plan === 'forage' && report.base && report.foodStock < report.population * 2) {
+      report.base.buildProgress = Math.max(0, report.base.buildProgress - 0.025);
+    }
+
+    if (plan.plan === 'fortify' && report.base) {
+      report.base.buildProgress += 0.12 + report.population * 0.004;
+    }
+  }
+
+  private findStrategicTerritory(report: LeaderReport): LandPatch | null {
+    let best: LandPatch | null = null;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    this.landPatches.forEach((patch) => {
+      const isOwn = patch.speciesId === report.species.id;
+      if (isOwn && patch.claimStrength > 0.8) {
+        return;
+      }
+
+      const baseDistance = report.base ? Math.sqrt(distanceSquared(report.base.position, patch.position)) : 400;
+      const enemyPenalty = patch.speciesId && !isOwn ? (report.military > 0.55 ? 20 : 150) : 0;
+      const claimOpportunity = isOwn ? 0.4 - patch.claimStrength : 1 - patch.claimStrength;
+      const score = patch.resourceLevel * 90 + claimOpportunity * 80 - baseDistance * 0.06 - enemyPenalty;
+
+      if (score > bestScore) {
+        best = patch;
+        bestScore = score;
+      }
+    });
+
+    return best;
   }
 
   private addLeaderMessage(
@@ -1141,6 +1402,7 @@ export class SimulationEngine {
     tone: DiplomaticMessageTone,
     en: string,
     pt: string,
+    intent = 'signal',
   ) {
     const fromLeader = this.findSpeciesLeader(fromSpeciesId);
 
@@ -1168,6 +1430,7 @@ export class SimulationEngine {
         fromSpeciesId,
         toSpeciesId,
         tone,
+        intent,
         text: { en, pt },
       },
       ...this.diplomaticMessages,

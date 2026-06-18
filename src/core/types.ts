@@ -72,7 +72,7 @@ export type Base = {
   bornDay: number;
 };
 
-export type DiplomaticMessageTone = 'peace' | 'war' | 'rally' | 'warning';
+export type DiplomaticMessageTone = 'peace' | 'war' | 'rally' | 'warning' | 'trade' | 'strategy';
 
 export type DiplomaticMessage = {
   id: number;
@@ -81,6 +81,7 @@ export type DiplomaticMessage = {
   fromSpeciesId: string;
   toSpeciesId: string | null;
   tone: DiplomaticMessageTone;
+  intent: string;
   text: {
     en: string;
     pt: string;

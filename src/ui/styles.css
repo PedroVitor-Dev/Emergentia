@@ -443,6 +443,14 @@ h1 {
   border-left-color: #f472b6;
 }
 
+.chat-message[data-tone='trade'] {
+  border-left-color: #86efac;
+}
+
+.chat-message[data-tone='strategy'] {
+  border-left-color: #8bd3ff;
+}
+
 .chat-meta {
   display: grid;
   grid-template-columns: 10px minmax(0, 1fr) auto;

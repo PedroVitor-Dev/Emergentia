@@ -40,7 +40,9 @@ export const DiplomacyChat = ({ language, messages, onLanguageChange, species }:
                   {to ? <small>{language === 'pt' ? `para ${to.name}` : `to ${to.name}`}</small> : <small>{language === 'pt' ? 'publico' : 'public'}</small>}
                 </div>
                 <p>{message.text[language]}</p>
-                <span className="chat-day">Day {message.day}</span>
+                <span className="chat-day">
+                  {message.intent} · Day {message.day}
+                </span>
               </article>
             );
           })

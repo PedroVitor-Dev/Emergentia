@@ -11,7 +11,7 @@ export const App = () => {
   const engineRef = useRef(new SimulationEngine());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isRunning, setIsRunning] = useState(true);
-  const [speed, setSpeed] = useState(2);
+  const [speed, setSpeed] = useState(1);
   const [snapshot, setSnapshot] = useState<SimulationSnapshot>(() => engineRef.current.getSnapshot());
 
   useEffect(() => {
@@ -80,7 +80,7 @@ export const App = () => {
               <Activity size={16} />
               <input
                 aria-label="Simulation speed"
-                max="8"
+                max="4"
                 min="1"
                 onChange={(event) => setSpeed(Number(event.target.value))}
                 type="range"

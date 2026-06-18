@@ -6,7 +6,7 @@ import { getSpeciesColor, getSpeciesName } from './names';
 
 const initialAgents = 50;
 const initialFood = 280;
-const dayLength = 36;
+const dayLength = 58;
 const maxTimelineEvents = 24;
 
 export class SimulationEngine {
@@ -102,8 +102,8 @@ export class SimulationEngine {
       const socialPull = nearestAlly && agent.energy > 34 ? agent.dna.social * 0.34 : 0;
       const foodPull = nearestFood ? hunger * (0.82 + agent.dna.vision) : 0;
       const wander = {
-        x: Math.sin((this.world.tick + agent.id * 7) * 0.031) * curiosity,
-        y: Math.cos((this.world.tick + agent.id * 11) * 0.027) * curiosity,
+        x: Math.sin((this.world.tick + agent.id * 7) * 0.018) * curiosity,
+        y: Math.cos((this.world.tick + agent.id * 11) * 0.016) * curiosity,
       };
       const target = nearestFood?.position ?? center;
       const toFood = normalize({
@@ -120,11 +120,11 @@ export class SimulationEngine {
         x: toFood.x * foodPull + toAlly.x * socialPull + wander.x,
         y: toFood.y * foodPull + toAlly.y * socialPull + wander.y,
       });
-      const speed = 1.15 + agent.dna.speed * 2.65;
+      const speed = 0.48 + agent.dna.speed * 1.18;
 
       agent.velocity = {
-        x: agent.velocity.x * 0.82 + direction.x * speed * 0.18,
-        y: agent.velocity.y * 0.82 + direction.y * speed * 0.18,
+        x: agent.velocity.x * 0.9 + direction.x * speed * 0.1,
+        y: agent.velocity.y * 0.9 + direction.y * speed * 0.1,
       };
       agent.position = wrapPosition(
         {
@@ -134,7 +134,7 @@ export class SimulationEngine {
         this.world.width,
         this.world.height,
       );
-      agent.energy -= 0.045 + agent.dna.speed * 0.028 + agent.dna.vision * 0.011;
+      agent.energy -= 0.024 + agent.dna.speed * 0.014 + agent.dna.vision * 0.007;
       agent.age += 1 / dayLength;
       agent.reproductionCooldown = Math.max(0, agent.reproductionCooldown - 1);
     });

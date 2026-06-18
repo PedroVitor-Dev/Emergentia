@@ -26,6 +26,8 @@ export type AgentIntent =
   | 'wander'
   | 'forage'
   | 'deliver'
+  | 'mine'
+  | 'deliverGold'
   | 'shelter'
   | 'attack'
   | 'defend'
@@ -33,6 +35,8 @@ export type AgentIntent =
   | 'rally'
   | 'avoid'
   | 'peace';
+
+export type AgentRole = 'worker' | 'warrior' | 'leader';
 
 export type Agent = {
   id: number;
@@ -46,8 +50,10 @@ export type Agent = {
   speciesId: string;
   tribeId: string | null;
   isLeader: boolean;
+  role: AgentRole;
   intent: AgentIntent;
   carryingFood: number;
+  carryingGold: number;
   reproductionCooldown: number;
   combatCooldown: number;
   memory: Vector2[];
@@ -66,6 +72,10 @@ export type Base = {
   radius: number;
   population: number;
   foodStock: number;
+  goldStock: number;
+  granaryLevel: number;
+  fenceLevel: number;
+  warriorCount: number;
   threatLevel: number;
   buildProgress: number;
   expansionLevel: number;
@@ -96,6 +106,14 @@ export type LandPatch = {
   claimStrength: number;
   resourceLevel: number;
   createdTick: number;
+};
+
+export type GoldMine = {
+  id: number;
+  position: Vector2;
+  gold: number;
+  maxGold: number;
+  claimedBySpeciesId: string | null;
 };
 
 export type World = {
@@ -136,6 +154,7 @@ export type VisualEffect = {
 export type SimulationStats = {
   population: number;
   food: number;
+  gold: number;
   births: number;
   deaths: number;
   reproductions: number;
@@ -151,6 +170,7 @@ export type SimulationSnapshot = {
   food: Food[];
   bases: Base[];
   landPatches: LandPatch[];
+  goldMines: GoldMine[];
   species: Species[];
   diplomaticMessages: DiplomaticMessage[];
   visualEffects: VisualEffect[];

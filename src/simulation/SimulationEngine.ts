@@ -6,6 +6,7 @@ import type {
   DiplomaticMessageTone,
   Dna,
   Food,
+  GoldMine,
   LandPatch,
   SimulationSnapshot,
   SimulationStats,
@@ -35,8 +36,11 @@ const maxLandPatches = 42;
 const foodCarryThreshold = 48;
 const maxCarryFood = 32;
 const initialTerritories = 14;
+const initialGoldMines = 8;
 const storedFoodSpoilageRate = 0.035;
 const territoryClaimRadius = 92;
+const maxCarryGold = 18;
+const castleInnerRadius = 74;
 
 type SpeciesRelation = {
   tension: number;
@@ -74,6 +78,7 @@ export class SimulationEngine {
   private world: World;
   private agents: Agent[];
   private food: Food[];
+  private goldMines: GoldMine[] = [];
   private bases: Base[] = [];
   private landPatches: LandPatch[] = [];
   private species: Species[];
@@ -81,6 +86,7 @@ export class SimulationEngine {
   private diplomaticMessages: DiplomaticMessage[] = [];
   private nextAgentId = 1;
   private nextFoodId = 1;
+  private nextGoldMineId = 1;
   private nextBaseId = 1;
   private nextLandPatchId = 1;
   private nextTimelineId = 1;
@@ -116,14 +122,16 @@ export class SimulationEngine {
         agent.energy = 118;
         agent.age = 22;
         species.leaderId = agent.id;
+        agent.role = 'leader';
       }
 
-      const side = index % 2 === 0 ? 0.43 : 0.57;
-      agent.position.x = randomRange(this.world.width * (side - 0.08), this.world.width * (side + 0.08));
-      agent.position.y = randomRange(this.world.height * 0.34, this.world.height * 0.66);
+      const side = index % 2 === 0 ? 0.14 : 0.86;
+      agent.position.x = randomRange(this.world.width * (side - 0.035), this.world.width * (side + 0.035));
+      agent.position.y = randomRange(this.world.height * 0.38, this.world.height * 0.62);
       return agent;
     });
     this.foundInitialCastles();
+    this.seedGoldMines();
     this.seedNeutralTerritories();
     this.food = Array.from({ length: initialFood }, () => createFood(this.nextFoodId++, this.world));
     this.timeline = [
@@ -144,6 +152,7 @@ export class SimulationEngine {
     this.world = fresh.world;
     this.agents = fresh.agents;
     this.food = fresh.food;
+    this.goldMines = fresh.goldMines;
     this.bases = fresh.bases;
     this.landPatches = fresh.landPatches;
     this.species = fresh.species;
@@ -151,6 +160,7 @@ export class SimulationEngine {
     this.diplomaticMessages = fresh.diplomaticMessages;
     this.nextAgentId = fresh.nextAgentId;
     this.nextFoodId = fresh.nextFoodId;
+    this.nextGoldMineId = fresh.nextGoldMineId;
     this.nextBaseId = fresh.nextBaseId;
     this.nextLandPatchId = fresh.nextLandPatchId;
     this.nextTimelineId = fresh.nextTimelineId;
@@ -189,6 +199,7 @@ export class SimulationEngine {
       this.moveAgents();
       this.resolveCollisions();
       this.resolveEating();
+      this.resolveMining();
       this.resolveCombat();
       this.resolveBases();
       this.resolveTerritories();
@@ -204,6 +215,7 @@ export class SimulationEngine {
       world: { ...this.world },
       agents: this.agents.map((agent) => ({ ...agent, position: { ...agent.position }, velocity: { ...agent.velocity } })),
       food: this.food.map((item) => ({ ...item, position: { ...item.position } })),
+      goldMines: this.goldMines.map((mine) => ({ ...mine, position: { ...mine.position } })),
       bases: this.bases.map((base) => ({ ...base, position: { ...base.position } })),
       landPatches: this.landPatches.map((patch) => ({ ...patch, position: { ...patch.position } })),
       species: this.species.map((item) => ({ ...item, signature: { ...item.signature } })),
@@ -223,20 +235,22 @@ export class SimulationEngine {
       const nearestEnemy = this.findNearestEnemy(agent);
       const nearestBase = this.findNearestBase(agent);
       const nearestTerritory = this.findNearestClaimableTerritory(agent);
+      const nearestGoldMine = this.findNearestGoldMine(agent);
       const speciesLeader = this.findSpeciesLeader(agent.speciesId);
       const localAllies = this.countNearbyAgents(agent, true, 128);
       const localEnemies = this.countNearbyAgents(agent, false, 128);
       const hunger = clamp((86 - agent.energy) / 86);
       const curiosity = agent.dna.curiosity - 0.5;
-      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, nearestTerritory, localAllies, localEnemies);
-      const socialPull = nearestAlly && agent.energy > 34 && intent !== 'claim' && intent !== 'forage' ? agent.dna.social * 0.26 : 0;
-      const basePull = nearestBase && ['deliver', 'shelter', 'defend', 'rally'].includes(intent) ? 0.82 + agent.dna.social * 0.52 : 0;
+      const intent = this.chooseIntent(agent, nearestBase, nearestFood, nearestEnemy, nearestTerritory, nearestGoldMine, localAllies, localEnemies);
+      const socialPull = nearestAlly && agent.energy > 34 && !['claim', 'forage', 'mine'].includes(intent) ? agent.dna.social * 0.26 : 0;
+      const basePull = nearestBase && ['deliver', 'deliverGold', 'shelter', 'defend', 'rally'].includes(intent) ? 0.82 + agent.dna.social * 0.52 : 0;
       const enemyPull = nearestEnemy && (intent === 'attack' || intent === 'defend') ? Math.max(0.1, agent.dna.aggression - 0.18) * 0.9 : 0;
       const enemyRepel = nearestEnemy && (intent === 'avoid' || intent === 'peace') ? 0.72 + (1 - agent.dna.aggression) * 0.35 : 0;
       const foodPull = nearestFood && intent === 'forage' ? (0.72 + hunger) * (0.72 + agent.dna.vision) : 0;
       const territoryPull = nearestTerritory && intent === 'claim' ? 0.76 + agent.dna.curiosity * 0.44 + agent.dna.social * 0.28 : 0;
+      const goldPull = nearestGoldMine && intent === 'mine' ? 0.8 + agent.dna.curiosity * 0.3 : 0;
       const leaderPull =
-        speciesLeader && !agent.isLeader && agent.dna.social > 0.48 && intent !== 'claim' && intent !== 'forage'
+        speciesLeader && !agent.isLeader && agent.dna.social > 0.48 && !['claim', 'forage', 'mine'].includes(intent)
           ? 0.12 + agent.dna.social * 0.24
           : 0;
       agent.intent = intent;
@@ -279,9 +293,16 @@ export class SimulationEngine {
             y: nearestTerritory.position.y - agent.position.y,
           })
         : { x: 0, y: 0 };
+      const toGold = nearestGoldMine
+        ? normalize({
+            x: nearestGoldMine.position.x - agent.position.x,
+            y: nearestGoldMine.position.y - agent.position.y,
+          })
+        : { x: 0, y: 0 };
       const direction = normalize({
         x:
           toFood.x * foodPull +
+          toGold.x * goldPull +
           toTerritory.x * territoryPull +
           toAlly.x * socialPull +
           toLeader.x * leaderPull +
@@ -290,6 +311,7 @@ export class SimulationEngine {
           wander.x,
         y:
           toFood.y * foodPull +
+          toGold.y * goldPull +
           toTerritory.y * territoryPull +
           toAlly.y * socialPull +
           toLeader.y * leaderPull +
@@ -312,6 +334,7 @@ export class SimulationEngine {
         this.world.width,
         this.world.height,
       );
+      this.enforceCastleAccess(agent);
       const hungerPressure = agent.energy < 54 ? 0.026 : agent.energy < 72 ? 0.014 : 0;
       agent.energy -= 0.034 + agent.dna.speed * 0.018 + agent.dna.vision * 0.009 + hungerPressure;
       agent.age += 1 / dayLength;
@@ -396,6 +419,69 @@ export class SimulationEngine {
     if (eaten.size > 0) {
       this.food = this.food.filter((item) => !eaten.has(item.id));
     }
+  }
+
+  private resolveMining() {
+    this.agents.forEach((agent) => {
+      if (agent.carryingGold > 0) {
+        const base = this.findNearestBase(agent);
+
+        if (base && distanceSquared(agent.position, base.position) < (base.radius + 24) ** 2) {
+          base.goldStock += agent.carryingGold;
+          agent.carryingGold = 0;
+          agent.intent = 'deliverGold';
+          this.addVisualEffect('deposit', base.position, agent.speciesId);
+        }
+
+        return;
+      }
+
+      if (agent.role !== 'worker' || agent.energy < 38) {
+        return;
+      }
+
+      const mine = this.goldMines.find((item) => item.gold > 0 && distanceSquared(agent.position, item.position) < 34 ** 2);
+
+      if (!mine) {
+        return;
+      }
+
+      const mined = Math.min(maxCarryGold, mine.gold, 8 + Math.round(agent.dna.curiosity * 9));
+      mine.gold -= mined;
+      mine.claimedBySpeciesId = agent.speciesId;
+      agent.carryingGold = mined;
+      agent.energy = Math.max(8, agent.energy - 2.2);
+      agent.intent = 'deliverGold';
+      this.addVisualEffect('build', mine.position, agent.speciesId);
+    });
+  }
+
+  private enforceCastleAccess(agent: Agent) {
+    if (agent.isLeader) {
+      return;
+    }
+
+    const base = this.bases.find((item) => item.speciesId === agent.speciesId);
+
+    if (!base) {
+      return;
+    }
+
+    const dx = agent.position.x - base.position.x;
+    const dy = agent.position.y - base.position.y;
+    const distance = Math.hypot(dx, dy);
+    const minimumDistance = castleInnerRadius + base.fenceLevel * 8;
+
+    if (distance <= 0 || distance >= minimumDistance) {
+      return;
+    }
+
+    const nx = dx / distance;
+    const ny = dy / distance;
+    agent.position.x = base.position.x + nx * minimumDistance;
+    agent.position.y = base.position.y + ny * minimumDistance;
+    agent.velocity.x += nx * 0.18;
+    agent.velocity.y += ny * 0.18;
   }
 
   private resolveReproduction() {
@@ -555,6 +641,26 @@ export class SimulationEngine {
     }
   }
 
+  private seedGoldMines() {
+    for (let index = 0; index < initialGoldMines; index += 1) {
+      const sideBias = index % 2 === 0 ? 0.28 : 0.72;
+      const angle = index * 2.111;
+      const position = {
+        x: clamp(this.world.width * sideBias + Math.cos(angle) * randomRange(120, 520), 120, this.world.width - 120),
+        y: clamp(this.world.height * 0.5 + Math.sin(angle) * randomRange(220, 900), 120, this.world.height - 120),
+      };
+      const maxGold = randomRange(420, 840);
+
+      this.goldMines.push({
+        id: this.nextGoldMineId++,
+        position,
+        gold: maxGold,
+        maxGold,
+        claimedBySpeciesId: null,
+      });
+    }
+  }
+
   private foundInitialCastles() {
     this.species.forEach((species, index) => {
       const members = this.agents.filter((agent) => agent.speciesId === species.id);
@@ -563,10 +669,10 @@ export class SimulationEngine {
         return;
       }
 
-      const side = index % 2 === 0 ? 0.38 : 0.62;
+      const side = index % 2 === 0 ? 0.12 : 0.88;
       const position = {
         x: this.world.width * side,
-        y: this.world.height * (0.36 + (index % 3) * 0.035),
+        y: this.world.height * (0.5 + (index % 2 === 0 ? -0.08 : 0.08)),
       };
       this.foundCastleForSpecies(species, position);
       this.addLeaderMessage(
@@ -591,6 +697,10 @@ export class SimulationEngine {
       radius: 118,
       population: this.agents.filter((agent) => agent.speciesId === species.id).length,
       foodStock: 28,
+      goldStock: 34,
+      granaryLevel: 0,
+      fenceLevel: 0,
+      warriorCount: 0,
       threatLevel: 0,
       buildProgress: 64,
       expansionLevel: 0,
@@ -635,6 +745,10 @@ export class SimulationEngine {
         radius: 92,
         population: cluster.length,
         foodStock: 0,
+        goldStock: 0,
+        granaryLevel: 0,
+        fenceLevel: 0,
+        warriorCount: 0,
         threatLevel: 0,
         buildProgress: 22,
         expansionLevel: 0,
@@ -666,6 +780,7 @@ export class SimulationEngine {
       base.population = workers.length;
       base.threatLevel = nearbyEnemies.length;
       base.foodStock = Math.max(0, base.foodStock - 0.006 * Math.max(1, base.population));
+      base.warriorCount = this.agents.filter((agent) => agent.speciesId === base.speciesId && agent.role === 'warrior').length;
 
       if (workers.length < 3) {
         base.buildProgress = Math.max(0, base.buildProgress - 0.015);
@@ -683,8 +798,11 @@ export class SimulationEngine {
 
       const socialPower = workers.reduce((sum, agent) => sum + agent.dna.social, 0) / workers.length;
       const storedFoodBoost = Math.min(1.6, base.foodStock / Math.max(30, workers.length * 12));
+      const economyBoost = Math.min(0.9, base.goldStock / 160 + base.granaryLevel * 0.12);
       const defenseDrag = nearbyEnemies.length > workers.length ? 0.64 : 1;
-      base.buildProgress += workers.length * socialPower * (0.045 + storedFoodBoost * 0.024) * defenseDrag;
+      base.buildProgress += workers.length * socialPower * (0.04 + storedFoodBoost * 0.018 + economyBoost * 0.014) * defenseDrag;
+
+      this.updateCastleEconomy(base, workers);
 
       if (this.world.tick % 18 === 0) {
         this.addVisualEffect('build', base.position, base.speciesId);
@@ -699,6 +817,44 @@ export class SimulationEngine {
       base.radius = Math.min(180, base.radius + 9);
       this.expandLand(base);
     });
+  }
+
+  private updateCastleEconomy(base: Base, workers: Agent[]) {
+    const workerCount = workers.filter((agent) => agent.role === 'worker').length;
+
+    if (base.goldStock >= 42 && base.foodStock >= 18 && base.granaryLevel < 4) {
+      base.goldStock -= 42;
+      base.foodStock -= 10;
+      base.granaryLevel += 1;
+      this.addVisualEffect('build', {
+        x: base.position.x + randomRange(-base.radius * 0.75, base.radius * 0.75),
+        y: base.position.y + randomRange(-base.radius * 0.75, base.radius * 0.75),
+      }, base.speciesId);
+    }
+
+    if (base.goldStock >= 58 && base.fenceLevel < 4 && (base.threatLevel > 0 || base.population > 12)) {
+      base.goldStock -= 58;
+      base.fenceLevel += 1;
+      this.addVisualEffect('build', base.position, base.speciesId);
+    }
+
+    const targetWarriors = Math.min(18, Math.ceil(base.population * (base.threatLevel > 0 ? 0.34 : 0.18)) + base.fenceLevel);
+
+    if (base.goldStock >= 36 && base.foodStock >= 8 && base.warriorCount < targetWarriors && workerCount > 3) {
+      const recruit = workers
+        .filter((agent) => agent.role === 'worker' && !agent.isLeader)
+        .sort((a, b) => b.dna.aggression + b.energy / 160 - (a.dna.aggression + a.energy / 160))[0];
+
+      if (recruit) {
+        base.goldStock -= 36;
+        base.foodStock -= 8;
+        recruit.role = 'warrior';
+        recruit.dna.aggression = Math.min(1, recruit.dna.aggression + 0.12);
+        recruit.energy = Math.min(120, recruit.energy + 12);
+        base.warriorCount += 1;
+        this.addVisualEffect('rally', recruit.position, recruit.speciesId);
+      }
+    }
   }
 
   private resolveTerritories() {
@@ -811,7 +967,8 @@ export class SimulationEngine {
     const before = this.agents.length;
     this.agents = this.agents.filter((agent) => {
       const maximumAge = 130 + agent.dna.fertility * 45 - agent.dna.speed * 24;
-      const survives = agent.energy > 0 && agent.age < maximumAge;
+      const protectedInCastle = this.isProtectedInsideCastle(agent);
+      const survives = protectedInCastle || (agent.energy > 0 && agent.age < maximumAge);
 
       if (!survives && !this.firstDeathLogged) {
         this.firstDeathLogged = true;
@@ -825,6 +982,16 @@ export class SimulationEngine {
       return survives;
     });
     this.deaths += before - this.agents.length;
+  }
+
+  private isProtectedInsideCastle(agent: Agent) {
+    if (!agent.isLeader) {
+      return false;
+    }
+
+    const base = this.bases.find((item) => item.speciesId === agent.speciesId);
+
+    return Boolean(base && distanceSquared(agent.position, base.position) < castleInnerRadius ** 2);
   }
 
   private growFood() {
@@ -856,6 +1023,39 @@ export class SimulationEngine {
       if (distance < vision && distance < nearestDistance) {
         nearest = foodItem;
         nearestDistance = distance;
+      }
+    });
+
+    return nearest;
+  }
+
+  private findNearestGoldMine(agent: Agent): GoldMine | null {
+    if (agent.role !== 'worker' || agent.carryingGold > 0) {
+      return null;
+    }
+
+    const base = this.bases.find((item) => item.speciesId === agent.speciesId);
+    const needsGold = !base || base.goldStock < 120 || base.granaryLevel < 3 || base.fenceLevel < 3;
+
+    if (!needsGold || agent.energy < 42) {
+      return null;
+    }
+
+    let nearest: GoldMine | null = null;
+    let nearestScore = Number.POSITIVE_INFINITY;
+
+    this.goldMines.forEach((mine) => {
+      if (mine.gold <= 0) {
+        return;
+      }
+
+      const distance = Math.sqrt(distanceSquared(agent.position, mine.position));
+      const ownerPenalty = mine.claimedBySpeciesId && mine.claimedBySpeciesId !== agent.speciesId ? 160 * (1 - agent.dna.aggression) : 0;
+      const score = distance + ownerPenalty - (mine.gold / mine.maxGold) * 120;
+
+      if (score < nearestScore && distance < 850 + agent.dna.vision * 420) {
+        nearest = mine;
+        nearestScore = score;
       }
     });
 
@@ -998,9 +1198,14 @@ export class SimulationEngine {
     food: Food | null,
     enemy: Agent | null,
     territory: LandPatch | null,
+    goldMine: GoldMine | null,
     localAllies: number,
     localEnemies: number,
   ): AgentIntent {
+    if (agent.carryingGold > 0 && base) {
+      return 'deliverGold';
+    }
+
     if (agent.carryingFood > 0 && base) {
       return 'deliver';
     }
@@ -1037,6 +1242,14 @@ export class SimulationEngine {
 
     if (enemy && agent.energy > 36 && (nearThreatenedBase || (supported && agent.dna.aggression > 0.38) || agent.dna.aggression > 0.68)) {
       return nearThreatenedBase ? 'defend' : 'attack';
+    }
+
+    if (agent.role === 'warrior' && enemy && agent.energy > 30) {
+      return base?.threatLevel ? 'defend' : 'attack';
+    }
+
+    if (goldMine && agent.energy > 46 && (!base || base.foodStock > 6 || agent.dna.curiosity > 0.55)) {
+      return 'mine';
     }
 
     if (territory && agent.energy > 50 && (!base || base.foodStock > 10 || agent.dna.curiosity > 0.62)) {
@@ -1552,6 +1765,7 @@ export class SimulationEngine {
     return {
       population: this.agents.length,
       food: this.food.length,
+      gold: Math.round(this.bases.reduce((sum, base) => sum + base.goldStock, 0) + this.goldMines.reduce((sum, mine) => sum + mine.gold, 0)),
       births: this.births,
       deaths: this.deaths,
       reproductions: this.reproductions,

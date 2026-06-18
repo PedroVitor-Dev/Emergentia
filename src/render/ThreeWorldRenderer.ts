@@ -1,9 +1,10 @@
 import * as THREE from 'three';
-import type { Agent, Base, LandPatch, SimulationSnapshot, VisualEffect, World } from '../core/types';
+import type { Agent, Base, GoldMine, LandPatch, SimulationSnapshot, VisualEffect, World } from '../core/types';
 
 const worldScale = 0.5;
 const maxVisibleCreatures = 160;
 const maxVisibleFood = 640;
+const maxVisibleGoldMines = 16;
 const maxVisibleBases = 12;
 const maxVisibleLandPatches = 56;
 const cameraMoveSpeed = 240;
@@ -52,6 +53,8 @@ type BaseRig = {
   rightTower: THREE.Mesh;
   wallSegments: THREE.InstancedMesh;
   battlements: THREE.InstancedMesh;
+  fencePosts: THREE.InstancedMesh;
+  granaries: THREE.InstancedMesh;
   gate: THREE.Mesh;
   flagPole: THREE.Mesh;
   flag: THREE.Mesh;
@@ -65,11 +68,13 @@ export class ThreeWorldRenderer {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(58, 1, 2, 2800);
   private readonly mapCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3600);
-  private readonly spectatorPosition = new THREE.Vector3(0, 95, 440);
+  private readonly spectatorPosition = new THREE.Vector3(-560, 105, 330);
   private readonly mapTarget = new THREE.Vector3(0, 0, 0);
   private readonly appleBodyMesh: THREE.InstancedMesh;
   private readonly appleStemMesh: THREE.InstancedMesh;
   private readonly appleLeafMesh: THREE.InstancedMesh;
+  private readonly goldMineMesh: THREE.InstancedMesh;
+  private readonly goldNuggetMesh: THREE.InstancedMesh;
   private readonly creaturePool: CreatureRig[] = [];
   private readonly effectPool: EffectRig[] = [];
   private readonly basePool: BaseRig[] = [];
@@ -111,7 +116,9 @@ export class ThreeWorldRenderer {
     this.appleBodyMesh = this.createAppleBodyMesh();
     this.appleStemMesh = this.createAppleStemMesh();
     this.appleLeafMesh = this.createAppleLeafMesh();
-    this.scene.add(this.appleBodyMesh, this.appleStemMesh, this.appleLeafMesh);
+    this.goldMineMesh = this.createGoldMineMesh();
+    this.goldNuggetMesh = this.createGoldNuggetMesh();
+    this.scene.add(this.appleBodyMesh, this.appleStemMesh, this.appleLeafMesh, this.goldMineMesh, this.goldNuggetMesh);
 
     this.createWorldStage();
     this.createLights();
@@ -137,6 +144,7 @@ export class ThreeWorldRenderer {
 
     const activeCamera = this.updateCamera();
     this.updateFood(snapshot);
+    this.updateGoldMines(snapshot);
     this.updateLandPatches(snapshot);
     this.updateBases(snapshot);
     this.updateCreatures(snapshot);
@@ -498,6 +506,22 @@ export class ThreeWorldRenderer {
     return mesh;
   }
 
+  private createGoldMineMesh() {
+    const geometry = new THREE.DodecahedronGeometry(13, 0);
+    const material = new THREE.MeshStandardMaterial({ color: '#5c5245', roughness: 0.96, metalness: 0.04 });
+    const mesh = new THREE.InstancedMesh(geometry, material, maxVisibleGoldMines);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return mesh;
+  }
+
+  private createGoldNuggetMesh() {
+    const geometry = new THREE.SphereGeometry(3.2, 8, 8);
+    const material = new THREE.MeshBasicMaterial({ color: '#f8d56b' });
+    const mesh = new THREE.InstancedMesh(geometry, material, maxVisibleGoldMines);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    return mesh;
+  }
+
   private createCreaturePool() {
     for (let index = 0; index < maxVisibleCreatures; index += 1) {
       const rig = this.createCreatureRig();
@@ -549,6 +573,8 @@ export class ThreeWorldRenderer {
       const rightTower = leftTower.clone();
       const wallSegments = new THREE.InstancedMesh(new THREE.BoxGeometry(18, 13, 8), this.getMaterial('#766d61'), 18);
       const battlements = new THREE.InstancedMesh(new THREE.BoxGeometry(5.5, 5, 5), this.getMaterial('#7b654b'), 8);
+      const fencePosts = new THREE.InstancedMesh(new THREE.BoxGeometry(3, 18, 3), this.getMaterial('#3a2417'), 28);
+      const granaries = new THREE.InstancedMesh(new THREE.BoxGeometry(18, 18, 16), this.getMaterial('#8a5d2f'), 4);
       const gate = new THREE.Mesh(new THREE.BoxGeometry(11, 15, 3), this.getMaterial('#21140d'));
       const flagPole = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.9, 42, 6), this.getMaterial('#2c1b12'));
       const flag = new THREE.Mesh(
@@ -602,8 +628,28 @@ export class ThreeWorldRenderer {
         );
         torchFlames.setMatrixAt(torch, this.reusableMatrix);
       }
+      for (let post = 0; post < 28; post += 1) {
+        const angle = (post / 28) * Math.PI * 2;
+        this.reusableMatrix.compose(
+          new THREE.Vector3(Math.cos(angle) * 92, 9, Math.sin(angle) * 92),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -angle, 0)),
+          new THREE.Vector3(1, 1, 1),
+        );
+        fencePosts.setMatrixAt(post, this.reusableMatrix);
+      }
+      for (let granary = 0; granary < 4; granary += 1) {
+        const angle = granary * Math.PI * 0.5 + 0.75;
+        this.reusableMatrix.compose(
+          new THREE.Vector3(Math.cos(angle) * 54, 12, Math.sin(angle) * 54),
+          new THREE.Quaternion().setFromEuler(new THREE.Euler(0, -angle, 0)),
+          new THREE.Vector3(1, 1, 1),
+        );
+        granaries.setMatrixAt(granary, this.reusableMatrix);
+      }
       wallSegments.instanceMatrix.needsUpdate = true;
       battlements.instanceMatrix.needsUpdate = true;
+      fencePosts.instanceMatrix.needsUpdate = true;
+      granaries.instanceMatrix.needsUpdate = true;
       torchFlames.instanceMatrix.needsUpdate = true;
       root.visible = false;
       root.add(
@@ -616,6 +662,8 @@ export class ThreeWorldRenderer {
         rightTower,
         wallSegments,
         battlements,
+        fencePosts,
+        granaries,
         gate,
         flagPole,
         flag,
@@ -633,6 +681,8 @@ export class ThreeWorldRenderer {
         rightTower,
         wallSegments,
         battlements,
+        fencePosts,
+        granaries,
         gate,
         flagPole,
         flag,
@@ -753,32 +803,38 @@ export class ThreeWorldRenderer {
     this.appleLeafMesh.instanceMatrix.needsUpdate = true;
   }
 
+  private updateGoldMines(snapshot: SimulationSnapshot) {
+    const visibleMines = snapshot.goldMines
+      .filter((mine) => mine.gold > 0 && this.isVisible(mine.position.x, mine.position.y, snapshot.world, 120))
+      .slice(0, maxVisibleGoldMines);
+
+    visibleMines.forEach((mine, index) => {
+      const position = this.toScenePosition(mine.position.x, mine.position.y, snapshot.world);
+      const depletion = Math.max(0.35, mine.gold / mine.maxGold);
+      this.reusableMatrix.compose(
+        new THREE.Vector3(position.x, 8, position.z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(mine.id * 0.2, mine.id * 0.7, mine.id * 0.11)),
+        new THREE.Vector3(1.2, 0.58 + depletion * 0.55, 1),
+      );
+      this.goldMineMesh.setMatrixAt(index, this.reusableMatrix);
+
+      this.reusableMatrix.compose(
+        new THREE.Vector3(position.x + 5, 17 + Math.sin(snapshot.world.tick * 0.05 + mine.id) * 1.4, position.z - 3),
+        new THREE.Quaternion(),
+        new THREE.Vector3(depletion, depletion, depletion),
+      );
+      this.goldNuggetMesh.setMatrixAt(index, this.reusableMatrix);
+    });
+
+    this.goldMineMesh.count = visibleMines.length;
+    this.goldNuggetMesh.count = visibleMines.length;
+    this.goldMineMesh.instanceMatrix.needsUpdate = true;
+    this.goldNuggetMesh.instanceMatrix.needsUpdate = true;
+  }
+
   private updateLandPatches(snapshot: SimulationSnapshot) {
-    const visiblePatches = snapshot.landPatches
-      .filter((patch) => this.isVisible(patch.position.x, patch.position.y, snapshot.world, patch.radius))
-      .slice(0, maxVisibleLandPatches);
-
-    this.landPatchPool.forEach((mesh, index) => {
-      const patch = visiblePatches[index];
-
-      if (!patch) {
-        mesh.visible = false;
-        return;
-      }
-
-      const position = this.toScenePosition(patch.position.x, patch.position.y, snapshot.world);
-      const age = Math.min(1, (snapshot.world.tick - patch.createdTick) / 90);
-      const material = mesh.material as THREE.MeshStandardMaterial;
-      const ownerColor = patch.speciesId ? snapshot.species.find((species) => species.id === patch.speciesId)?.color : null;
-      const color = ownerColor ?? '#8c8a59';
-      const ownership = patch.speciesId ? 0.32 + patch.claimStrength * 0.6 : 0.18;
-
-      mesh.visible = true;
-      mesh.position.set(position.x, 0.08, position.z);
-      mesh.scale.setScalar((patch.radius * worldScale * 0.95) * (0.35 + age * 0.65) * (0.92 + patch.resourceLevel * 0.16));
-      mesh.rotation.z = patch.id * 0.41;
-      material.color.set(color).lerp(new THREE.Color(patch.speciesId ? '#263522' : '#4f5534'), patch.speciesId ? 0.34 : 0.48);
-      material.opacity = Math.min(0.82, ownership + age * 0.22 + patch.resourceLevel * 0.18);
+    this.landPatchPool.forEach((mesh) => {
+      mesh.visible = false;
     });
   }
 
@@ -819,6 +875,7 @@ export class ThreeWorldRenderer {
     (rig.rightTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.2);
     (rig.flag.material as THREE.MeshBasicMaterial).color.set(speciesColor);
     (rig.wallSegments.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#766d61'), 0.24);
+    (rig.granaries.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a5d2f'), 0.58);
     (rig.gate.material as THREE.MeshStandardMaterial).color.set(base.threatLevel > 0 ? '#120909' : '#21140d');
     (rig.beacon.material as THREE.MeshBasicMaterial).color.set(speciesColor);
     (rig.beacon.material as THREE.MeshBasicMaterial).opacity = 0.48 + Math.min(0.4, base.population * 0.018 + foodLevel * 0.18);
@@ -829,6 +886,8 @@ export class ThreeWorldRenderer {
     rig.flag.position.y = 107 + castleLevel * 20;
     rig.flag.scale.set(0.92 + populationLevel * 0.42, 0.86 + foodLevel * 0.32, 1);
     rig.beacon.position.y = 70 + castleLevel * 24;
+    rig.fencePosts.count = Math.min(28, base.fenceLevel * 7);
+    rig.granaries.count = Math.min(4, base.granaryLevel);
   }
 
   private updateCreatures(snapshot: SimulationSnapshot) {
@@ -880,7 +939,7 @@ export class ThreeWorldRenderer {
     const bodyScale = 0.82 + Math.min(0.32, agent.energy / 360);
     const widthScale = 0.82 + agent.dna.social * 0.45;
     const heightScale = 0.84 + agent.dna.fertility * 0.5;
-    const leaderScale = agent.isLeader ? 1.86 : 1;
+    const leaderScale = agent.isLeader ? 1.86 : agent.role === 'warrior' ? 1.18 : 1;
 
     rig.root.visible = true;
     rig.root.position.set(position.x, 15 + (isEating ? Math.abs(chew) * 0.55 : 0) + punch * 1.4, position.z - punch * 3.2);
@@ -888,6 +947,9 @@ export class ThreeWorldRenderer {
     rig.root.scale.set(widthScale * leaderScale, bodyScale * heightScale * leaderScale, leaderScale);
 
     this.reusableColor.set(color);
+    if (agent.role === 'warrior' && !agent.isLeader) {
+      this.reusableColor.lerp(new THREE.Color('#151515'), 0.22);
+    }
     const bodyMaterial = rig.body.material as THREE.MeshStandardMaterial;
     bodyMaterial.color.copy(this.reusableColor);
     bodyMaterial.emissive.copy(this.reusableColor).multiplyScalar(0.22);

@@ -176,10 +176,10 @@ export const App = () => {
         <div className="metric-grid">
           <MetricCard label="Species" value={snapshot.stats.speciesCount} />
           <MetricCard label="Food" value={snapshot.stats.food} />
+          <MetricCard label="Gold" value={snapshot.stats.gold} />
           <MetricCard label="Births" value={snapshot.stats.births} />
           <MetricCard label="Deaths" value={snapshot.stats.deaths} />
           <MetricCard label="Avg energy" value={snapshot.stats.averageEnergy.toFixed(1)} />
-          <MetricCard label="Avg gen" value={snapshot.stats.averageGeneration.toFixed(1)} />
         </div>
 
         <div className="dominance-panel">

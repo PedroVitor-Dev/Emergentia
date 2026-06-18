@@ -7,7 +7,6 @@ const maxVisibleFood = 640;
 const cameraMoveSpeed = 170;
 const cameraMinHeight = 32;
 const cameraMaxHeight = 260;
-const cameraCreatureRadius = 38;
 const cameraViewDistance = 620;
 const mapMinZoom = 0.55;
 const mapMaxZoom = 3.6;
@@ -101,7 +100,6 @@ export class ThreeWorldRenderer {
     this.updateKeyboardNavigation(snapshot.world);
 
     if (this.cameraMode === 'spectator') {
-      this.keepCameraAwayFromAgents(snapshot);
       this.clampSpectatorToWorld(snapshot.world);
     } else {
       this.clampMapToWorld(snapshot.world);
@@ -308,25 +306,6 @@ export class ThreeWorldRenderer {
 
     this.mapTarget.x = THREE.MathUtils.clamp(this.mapTarget.x, -horizontalLimit, horizontalLimit);
     this.mapTarget.z = THREE.MathUtils.clamp(this.mapTarget.z, -verticalLimit, verticalLimit);
-  }
-
-  private keepCameraAwayFromAgents(snapshot: SimulationSnapshot) {
-    const camera2D = new THREE.Vector2(this.spectatorPosition.x, this.spectatorPosition.z);
-
-    snapshot.agents.forEach((agent) => {
-      const position = this.toScenePosition(agent.position.x, agent.position.y, snapshot.world);
-      const agent2D = new THREE.Vector2(position.x, position.z);
-      const distance = camera2D.distanceTo(agent2D);
-
-      if (distance <= 0 || distance >= cameraCreatureRadius) {
-        return;
-      }
-
-      const push = camera2D.sub(agent2D).normalize().multiplyScalar(cameraCreatureRadius - distance);
-      this.spectatorPosition.x += push.x;
-      this.spectatorPosition.z += push.y;
-      camera2D.set(this.spectatorPosition.x, this.spectatorPosition.z);
-    });
   }
 
   private isTypingTarget(target: EventTarget | null) {

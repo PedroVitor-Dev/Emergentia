@@ -19,6 +19,7 @@ export type Species = {
   signature: Dna;
   population: number;
   bornDay: number;
+  leaderId: number | null;
 };
 
 export type AgentIntent =
@@ -43,6 +44,7 @@ export type Agent = {
   generation: number;
   speciesId: string;
   tribeId: string | null;
+  isLeader: boolean;
   intent: AgentIntent;
   carryingFood: number;
   reproductionCooldown: number;
@@ -67,6 +69,21 @@ export type Base = {
   buildProgress: number;
   expansionLevel: number;
   bornDay: number;
+};
+
+export type DiplomaticMessageTone = 'peace' | 'war' | 'rally' | 'warning';
+
+export type DiplomaticMessage = {
+  id: number;
+  day: number;
+  tick: number;
+  fromSpeciesId: string;
+  toSpeciesId: string | null;
+  tone: DiplomaticMessageTone;
+  text: {
+    en: string;
+    pt: string;
+  };
 };
 
 export type LandPatch = {
@@ -131,6 +148,7 @@ export type SimulationSnapshot = {
   bases: Base[];
   landPatches: LandPatch[];
   species: Species[];
+  diplomaticMessages: DiplomaticMessage[];
   visualEffects: VisualEffect[];
   stats: SimulationStats;
   timeline: TimelineEvent[];

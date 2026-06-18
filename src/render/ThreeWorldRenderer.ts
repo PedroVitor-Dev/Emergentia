@@ -31,6 +31,8 @@ type CreatureRig = {
   hammerHead: THREE.Mesh;
   carryApple: THREE.Mesh;
   carryStem: THREE.Mesh;
+  crown: THREE.Mesh;
+  crownJewel: THREE.Mesh;
 };
 
 type EffectRig = {
@@ -44,6 +46,10 @@ type BaseRig = {
   floor: THREE.Mesh;
   hut: THREE.Mesh;
   roof: THREE.Mesh;
+  leftTower: THREE.Mesh;
+  rightTower: THREE.Mesh;
+  battlements: THREE.InstancedMesh;
+  gate: THREE.Mesh;
   beacon: THREE.Mesh;
 };
 
@@ -528,22 +534,35 @@ export class ThreeWorldRenderer {
   private createBasePool() {
     for (let index = 0; index < maxVisibleBases; index += 1) {
       const root = new THREE.Group();
-      const floor = new THREE.Mesh(new THREE.CylinderGeometry(24, 30, 4, 12), this.getMaterial('#5b472f'));
-      const hut = new THREE.Mesh(new THREE.BoxGeometry(28, 22, 24), this.getMaterial('#6b3f24'));
-      const roof = new THREE.Mesh(new THREE.ConeGeometry(24, 18, 4), this.getMaterial('#2a1a12'));
+      const floor = new THREE.Mesh(new THREE.CylinderGeometry(44, 54, 6, 16), this.getMaterial('#6d665b'));
+      const hut = new THREE.Mesh(new THREE.BoxGeometry(52, 34, 42), this.getMaterial('#7b7469'));
+      const roof = new THREE.Mesh(new THREE.ConeGeometry(38, 24, 4), this.getMaterial('#2a1a12'));
+      const leftTower = new THREE.Mesh(new THREE.CylinderGeometry(10, 13, 54, 8), this.getMaterial('#8a8174'));
+      const rightTower = leftTower.clone();
+      const battlements = new THREE.InstancedMesh(new THREE.BoxGeometry(5.5, 5, 5), this.getMaterial('#7b654b'), 8);
+      const gate = new THREE.Mesh(new THREE.BoxGeometry(11, 15, 3), this.getMaterial('#21140d'));
       const beacon = new THREE.Mesh(
         new THREE.SphereGeometry(4.2, 8, 8),
         new THREE.MeshBasicMaterial({ color: '#f8d56b', transparent: true, opacity: 0.72 }),
       );
 
-      floor.position.y = 2;
-      hut.position.y = 15;
-      roof.position.y = 34;
+      floor.position.y = 3;
+      hut.position.y = 23;
+      roof.position.y = 53;
       roof.rotation.y = Math.PI * 0.25;
-      beacon.position.y = 47;
+      leftTower.position.set(-33, 30, -2);
+      rightTower.position.set(33, 30, -2);
+      gate.position.set(0, 14, -22.8);
+      beacon.position.y = 72;
+      for (let block = 0; block < 8; block += 1) {
+        const x = -34 + block * 9.7;
+        this.reusableMatrix.compose(new THREE.Vector3(x, 42, -22), new THREE.Quaternion(), new THREE.Vector3(1.15, 1.15, 1.15));
+        battlements.setMatrixAt(block, this.reusableMatrix);
+      }
+      battlements.instanceMatrix.needsUpdate = true;
       root.visible = false;
-      root.add(floor, hut, roof, beacon);
-      this.basePool.push({ root, floor, hut, roof, beacon });
+      root.add(floor, hut, roof, leftTower, rightTower, battlements, gate, beacon);
+      this.basePool.push({ root, floor, hut, roof, leftTower, rightTower, battlements, gate, beacon });
       this.scene.add(root);
     }
   }
@@ -592,12 +611,16 @@ export class ThreeWorldRenderer {
     const hammerHead = new THREE.Mesh(new THREE.BoxGeometry(6, 2.6, 2.8), this.getMaterial('#4c4c46'));
     const carryApple = new THREE.Mesh(new THREE.SphereGeometry(3.2, 8, 8), this.getMaterial('#d82635'));
     const carryStem = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.48, 2.6, 5), this.getMaterial('#3a2417'));
+    const crown = new THREE.Mesh(new THREE.ConeGeometry(6.2, 5.5, 5), this.getMaterial('#f8d56b'));
+    const crownJewel = new THREE.Mesh(new THREE.SphereGeometry(1.4, 6, 6), this.getMaterial('#f472b6'));
 
     hammerHandle.visible = false;
     hammerHead.visible = false;
     carryApple.visible = false;
     carryStem.visible = false;
-    root.add(body, leftEye, rightEye, mouth, teeth, leftLeg, rightLeg, leftArm, rightArm, hammerHandle, hammerHead, carryApple, carryStem);
+    crown.visible = false;
+    crownJewel.visible = false;
+    root.add(body, leftEye, rightEye, mouth, teeth, leftLeg, rightLeg, leftArm, rightArm, hammerHandle, hammerHead, carryApple, carryStem, crown, crownJewel);
     return {
       root,
       body,
@@ -613,6 +636,8 @@ export class ThreeWorldRenderer {
       hammerHead,
       carryApple,
       carryStem,
+      crown,
+      crownJewel,
     };
   }
 
@@ -703,11 +728,14 @@ export class ThreeWorldRenderer {
     const progressScale = 0.72 + Math.min(0.42, base.buildProgress / 220);
 
     rig.root.visible = true;
-    rig.root.position.set(position.x, 0.8, position.z);
+    rig.root.position.set(position.x, 1.4, position.z);
     rig.root.rotation.y = base.id * 0.57;
-    rig.root.scale.setScalar(progressScale * pulse);
-    (rig.floor.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#5b472f'), 0.62);
-    (rig.hut.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#6b3f24'), 0.7);
+    rig.root.scale.setScalar(progressScale * pulse * 1.34);
+    (rig.floor.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#6d665b'), 0.5);
+    (rig.hut.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#7b7469'), 0.55);
+    (rig.leftTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.62);
+    (rig.rightTower.material as THREE.MeshStandardMaterial).color.set(speciesColor).lerp(new THREE.Color('#8a8174'), 0.62);
+    (rig.gate.material as THREE.MeshStandardMaterial).color.set(base.threatLevel > 0 ? '#120909' : '#21140d');
     (rig.beacon.material as THREE.MeshBasicMaterial).color.set(speciesColor);
     (rig.beacon.material as THREE.MeshBasicMaterial).opacity = 0.5 + Math.min(0.35, base.population * 0.025);
   }
@@ -715,6 +743,7 @@ export class ThreeWorldRenderer {
   private updateCreatures(snapshot: SimulationSnapshot) {
     const eatingAgents = this.getEatingAgentIds(snapshot);
     const buildingAgents = this.getBuildingAgentIds(snapshot);
+    const fightingAgents = this.getFightingAgentIds(snapshot);
     const colors = new Map(snapshot.species.map((species) => [species.id, species.color]));
     const visibleAgents = snapshot.agents
       .filter((agent) => this.isVisible(agent.position.x, agent.position.y, snapshot.world, 130))
@@ -736,6 +765,7 @@ export class ThreeWorldRenderer {
         snapshot.world.tick,
         eatingAgents.has(agent.id),
         buildingAgents.has(agent.id),
+        fightingAgents.has(agent.id),
       );
     });
   }
@@ -748,20 +778,23 @@ export class ThreeWorldRenderer {
     tick: number,
     isEating: boolean,
     isBuilding: boolean,
+    isFighting: boolean,
   ) {
     const position = this.toScenePosition(agent.position.x, agent.position.y, world);
     const direction = agent.facingAngle;
     const gait = Math.sin(tick * 0.12 + agent.id) * 0.6;
     const chew = isEating ? Math.sin(tick * 0.85 + agent.id) * 0.8 : 0;
     const hammerSwing = isBuilding ? Math.sin(tick * 0.42 + agent.id) : 0;
+    const punch = isFighting ? Math.max(0, Math.sin(tick * 0.72 + agent.id)) : 0;
     const bodyScale = 0.82 + Math.min(0.32, agent.energy / 360);
     const widthScale = 0.82 + agent.dna.social * 0.45;
     const heightScale = 0.84 + agent.dna.fertility * 0.5;
+    const leaderScale = agent.isLeader ? 1.86 : 1;
 
     rig.root.visible = true;
-    rig.root.position.set(position.x, 15 + (isEating ? Math.abs(chew) * 0.55 : 0), position.z);
+    rig.root.position.set(position.x, 15 + (isEating ? Math.abs(chew) * 0.55 : 0) + punch * 1.4, position.z - punch * 3.2);
     rig.root.rotation.y = direction;
-    rig.root.scale.set(widthScale, bodyScale * heightScale, 1);
+    rig.root.scale.set(widthScale * leaderScale, bodyScale * heightScale * leaderScale, leaderScale);
 
     this.reusableColor.set(color);
     const bodyMaterial = rig.body.material as THREE.MeshStandardMaterial;
@@ -790,9 +823,10 @@ export class ThreeWorldRenderer {
     rig.leftLeg.position.set(-5.2, -4.5 + gait, 0);
     rig.rightLeg.position.set(5.2, -4.5 - gait, 0);
     rig.leftArm.position.set(-12.5, 8 + gait * 2, isEating ? -2.2 : 0);
-    rig.rightArm.position.set(12.5, 8 - gait * 2, isEating || isBuilding ? -2.2 : 0);
+    rig.rightArm.position.set(12.5, 8 - gait * 2, isEating || isBuilding ? -2.2 : -punch * 7);
     rig.leftArm.rotation.z = (isEating ? 0.75 : 0.35) + gait * 0.35;
-    rig.rightArm.rotation.z = (isBuilding ? -1.25 - hammerSwing * 0.55 : isEating ? -0.75 : -0.35) - gait * 0.35;
+    rig.rightArm.rotation.z = (isBuilding ? -1.25 - hammerSwing * 0.55 : isEating ? -0.75 : -0.35 - punch * 1.15) - gait * 0.35;
+    rig.rightArm.rotation.x = -punch * 0.72;
     rig.hammerHandle.visible = isBuilding;
     rig.hammerHead.visible = isBuilding;
     rig.hammerHandle.position.set(15.2, 7.2, -5);
@@ -806,6 +840,11 @@ export class ThreeWorldRenderer {
     rig.carryApple.scale.setScalar(0.78 + Math.min(0.45, agent.carryingFood / 60));
     rig.carryStem.position.set(-13.2, 9 + gait * 1.4, -6.4);
     rig.carryStem.rotation.z = 0.32;
+    rig.crown.visible = agent.isLeader;
+    rig.crownJewel.visible = agent.isLeader;
+    rig.crown.position.set(0, 29.5, -0.4);
+    rig.crown.rotation.y = tick * 0.012 + agent.id;
+    rig.crownJewel.position.set(0, 33.2, -2.4);
 
     const teethCount = 3 + Math.round(agent.dna.aggression * 3);
     for (let index = 0; index < 6; index += 1) {
@@ -930,6 +969,25 @@ export class ThreeWorldRenderer {
     });
 
     return buildingAgents;
+  }
+
+  private getFightingAgentIds(snapshot: SimulationSnapshot) {
+    const recentCombatEffects = snapshot.visualEffects.filter((effect) => effect.type === 'combat' && snapshot.world.tick - effect.tick < 24);
+    const fightingAgents = new Set<number>();
+
+    recentCombatEffects.forEach((effect) => {
+      snapshot.agents
+        .filter((agent) => agent.speciesId === effect.speciesId || agent.intent === 'attack' || agent.intent === 'defend')
+        .map((agent) => ({
+          agent,
+          distance: (agent.position.x - effect.position.x) ** 2 + (agent.position.y - effect.position.y) ** 2,
+        }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 2)
+        .forEach(({ agent }) => fightingAgents.add(agent.id));
+    });
+
+    return fightingAgents;
   }
 
   private animateWorld(tick: number) {

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SimulationSnapshot } from '../core/types';
 import { CameraMode, ThreeWorldRenderer } from '../render/ThreeWorldRenderer';
 import { SimulationEngine } from '../simulation/SimulationEngine';
+import { DiplomacyChat } from './DiplomacyChat';
 import { MetricCard } from './MetricCard';
 import { SpeciesList } from './SpeciesList';
 import { Timeline } from './Timeline';
@@ -18,6 +19,7 @@ export const App = () => {
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState(1);
   const [cameraMode, setCameraMode] = useState<CameraMode>('spectator');
+  const [chatLanguage, setChatLanguage] = useState<'pt' | 'en'>('pt');
   const [snapshot, setSnapshot] = useState<SimulationSnapshot>(() => snapshotRef.current);
 
   useEffect(() => {
@@ -190,6 +192,12 @@ export const App = () => {
         </div>
 
         <SpeciesList species={snapshot.species} />
+        <DiplomacyChat
+          language={chatLanguage}
+          messages={snapshot.diplomaticMessages}
+          onLanguageChange={setChatLanguage}
+          species={snapshot.species}
+        />
         <Timeline events={snapshot.timeline} />
       </aside>
     </main>

@@ -19,6 +19,7 @@ export const createInitialSpecies = (index = 0): Species => ({
   signature: createRandomDna(),
   population: 0,
   bornDay: 1,
+  leaderId: null,
 });
 
 export const createAgent = (
@@ -44,6 +45,7 @@ export const createAgent = (
   generation,
   speciesId,
   tribeId: null,
+  isLeader: false,
   intent: 'wander',
   carryingFood: 0,
   reproductionCooldown: randomRange(0, 70),

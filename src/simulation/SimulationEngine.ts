@@ -2,6 +2,8 @@ import type {
   Agent,
   AgentIntent,
   Base,
+  DiplomaticMessage,
+  DiplomaticMessageTone,
   Dna,
   Food,
   LandPatch,
@@ -21,13 +23,14 @@ const initialAgents = 50;
 const initialFood = 280;
 const dayLength = 58;
 const maxTimelineEvents = 24;
+const maxDiplomaticMessages = 18;
 const softPopulationLimit = 180;
 const maxBirthsPerStep = 6;
 const maxVisualEffects = 96;
 const visualEffectLifetime = 96;
 const collisionRadius = 26;
 const combatRadius = 42;
-const maxBases = 8;
+const maxBases = 7;
 const maxLandPatches = 28;
 const foodCarryThreshold = 48;
 const maxCarryFood = 32;
@@ -35,6 +38,7 @@ const maxCarryFood = 32;
 type SpeciesRelation = {
   tension: number;
   truceUntil: number;
+  lastMessageTick: number;
 };
 
 export class SimulationEngine {
@@ -45,11 +49,13 @@ export class SimulationEngine {
   private landPatches: LandPatch[] = [];
   private species: Species[];
   private timeline: TimelineEvent[];
+  private diplomaticMessages: DiplomaticMessage[] = [];
   private nextAgentId = 1;
   private nextFoodId = 1;
   private nextBaseId = 1;
   private nextLandPatchId = 1;
   private nextTimelineId = 1;
+  private nextDiplomaticMessageId = 1;
   private nextVisualEffectId = 1;
   private births = initialAgents;
   private deaths = 0;
@@ -73,11 +79,21 @@ export class SimulationEngine {
     this.agents = Array.from({ length: initialAgents }, (_, index) => {
       const species = index % 2 === 0 ? firstSpecies : secondSpecies;
       const agent = createAgent(this.nextAgentId++, this.world, species.id, 1, species.signature);
+      const isFirstOfSpecies = !this.species.find((item) => item.id === species.id)?.leaderId;
+
+      if (isFirstOfSpecies) {
+        agent.isLeader = true;
+        agent.energy = 118;
+        agent.age = 22;
+        species.leaderId = agent.id;
+      }
+
       const side = index % 2 === 0 ? 0.43 : 0.57;
       agent.position.x = randomRange(this.world.width * (side - 0.08), this.world.width * (side + 0.08));
       agent.position.y = randomRange(this.world.height * 0.34, this.world.height * 0.66);
       return agent;
     });
+    this.foundInitialCastles();
     this.food = Array.from({ length: initialFood }, () => createFood(this.nextFoodId++, this.world));
     this.timeline = [
       {
@@ -101,11 +117,13 @@ export class SimulationEngine {
     this.landPatches = fresh.landPatches;
     this.species = fresh.species;
     this.timeline = fresh.timeline;
+    this.diplomaticMessages = fresh.diplomaticMessages;
     this.nextAgentId = fresh.nextAgentId;
     this.nextFoodId = fresh.nextFoodId;
     this.nextBaseId = fresh.nextBaseId;
     this.nextLandPatchId = fresh.nextLandPatchId;
     this.nextTimelineId = fresh.nextTimelineId;
+    this.nextDiplomaticMessageId = fresh.nextDiplomaticMessageId;
     this.nextVisualEffectId = fresh.nextVisualEffectId;
     this.births = fresh.births;
     this.deaths = fresh.deaths;
@@ -130,6 +148,7 @@ export class SimulationEngine {
         this.world.day += 1;
         this.growFood();
         this.coolDiplomacy();
+        this.resolveLeaderDiplomacy();
         this.detectSpecies();
         this.logMilestones();
       }
@@ -154,6 +173,7 @@ export class SimulationEngine {
       bases: this.bases.map((base) => ({ ...base, position: { ...base.position } })),
       landPatches: this.landPatches.map((patch) => ({ ...patch, position: { ...patch.position } })),
       species: this.species.map((item) => ({ ...item, signature: { ...item.signature } })),
+      diplomaticMessages: this.diplomaticMessages.map((message) => ({ ...message, text: { ...message.text } })),
       visualEffects: this.visualEffects.map((effect) => ({ ...effect, position: { ...effect.position } })),
       stats: this.getStats(),
       timeline: [...this.timeline],
@@ -168,6 +188,7 @@ export class SimulationEngine {
       const nearestAlly = this.findNearestAlly(agent);
       const nearestEnemy = this.findNearestEnemy(agent);
       const nearestBase = this.findNearestBase(agent);
+      const speciesLeader = this.findSpeciesLeader(agent.speciesId);
       const localAllies = this.countNearbyAgents(agent, true, 128);
       const localEnemies = this.countNearbyAgents(agent, false, 128);
       const hunger = clamp((86 - agent.energy) / 86);
@@ -178,6 +199,7 @@ export class SimulationEngine {
       const enemyPull = nearestEnemy && (intent === 'attack' || intent === 'defend') ? Math.max(0.1, agent.dna.aggression - 0.18) * 0.9 : 0;
       const enemyRepel = nearestEnemy && (intent === 'avoid' || intent === 'peace') ? 0.72 + (1 - agent.dna.aggression) * 0.35 : 0;
       const foodPull = nearestFood && intent === 'forage' ? (0.72 + hunger) * (0.72 + agent.dna.vision) : 0;
+      const leaderPull = speciesLeader && !agent.isLeader && agent.dna.social > 0.48 ? 0.16 + agent.dna.social * 0.34 : 0;
       agent.intent = intent;
       const wander = {
         x: Math.sin((this.world.tick + agent.id * 7) * 0.018) * curiosity,
@@ -206,11 +228,29 @@ export class SimulationEngine {
             y: nearestBase.position.y - agent.position.y,
           })
         : { x: 0, y: 0 };
+      const toLeader = speciesLeader
+        ? normalize({
+            x: speciesLeader.position.x - agent.position.x,
+            y: speciesLeader.position.y - agent.position.y,
+          })
+        : { x: 0, y: 0 };
       const direction = normalize({
-        x: toFood.x * foodPull + toAlly.x * socialPull + toEnemy.x * (enemyPull - enemyRepel) + toBase.x * basePull + wander.x,
-        y: toFood.y * foodPull + toAlly.y * socialPull + toEnemy.y * (enemyPull - enemyRepel) + toBase.y * basePull + wander.y,
+        x:
+          toFood.x * foodPull +
+          toAlly.x * socialPull +
+          toLeader.x * leaderPull +
+          toEnemy.x * (enemyPull - enemyRepel) +
+          toBase.x * basePull +
+          wander.x,
+        y:
+          toFood.y * foodPull +
+          toAlly.y * socialPull +
+          toLeader.y * leaderPull +
+          toEnemy.y * (enemyPull - enemyRepel) +
+          toBase.y * basePull +
+          wander.y,
       });
-      const speed = 0.48 + agent.dna.speed * 1.18;
+      const speed = (agent.isLeader ? 0.42 : 0.48) + agent.dna.speed * 1.12;
 
       agent.velocity = {
         x: agent.velocity.x * 0.9 + direction.x * speed * 0.1,
@@ -239,7 +279,7 @@ export class SimulationEngine {
       return;
     }
 
-    const targetAngle = Math.atan2(agent.velocity.x, agent.velocity.y);
+    const targetAngle = Math.atan2(-agent.velocity.x, -agent.velocity.y);
     const difference = Math.atan2(Math.sin(targetAngle - agent.facingAngle), Math.cos(targetAngle - agent.facingAngle));
     agent.facingAngle += difference * 0.14;
   }
@@ -341,6 +381,7 @@ export class SimulationEngine {
         y: (parentA.position.y + parentB.position.y) / 2 + randomRange(-12, 12),
       };
       child.energy = 48;
+      child.isLeader = false;
       parentA.energy -= 29;
       parentB.energy -= 24;
       parentA.reproductionCooldown = 90 - parentA.dna.fertility * 38;
@@ -390,8 +431,16 @@ export class SimulationEngine {
       attacker.energy -= 0.8 + attacker.dna.aggression * 1.2;
       attacker.combatCooldown = 46 - attacker.dna.aggression * 18;
       target.combatCooldown = Math.max(target.combatCooldown, 24);
-      attacker.facingAngle = Math.atan2(target.position.x - attacker.position.x, target.position.y - attacker.position.y);
-      target.facingAngle = Math.atan2(attacker.position.x - target.position.x, attacker.position.y - target.position.y);
+      const push = normalize({
+        x: target.position.x - attacker.position.x,
+        y: target.position.y - attacker.position.y,
+      });
+      target.velocity.x += push.x * (0.72 + attacker.dna.aggression * 0.82);
+      target.velocity.y += push.y * (0.72 + attacker.dna.aggression * 0.82);
+      attacker.velocity.x += push.x * 0.18;
+      attacker.velocity.y += push.y * 0.18;
+      attacker.facingAngle = Math.atan2(-(target.position.x - attacker.position.x), -(target.position.y - attacker.position.y));
+      target.facingAngle = Math.atan2(-(attacker.position.x - target.position.x), -(attacker.position.y - target.position.y));
       this.adjustTension(attacker.speciesId, target.speciesId, 2.6 + attacker.dna.aggression * 2.4);
       this.addVisualEffect('combat', {
         x: (attacker.position.x + target.position.x) / 2,
@@ -401,6 +450,7 @@ export class SimulationEngine {
       if (!this.firstCombatLogged) {
         this.firstCombatLogged = true;
         this.addTimelineEvent('milestone', 'First clash', `Agent #${attacker.id} attacked agent #${target.id} near an apple grove.`);
+        this.addLeaderMessage(attacker.speciesId, target.speciesId, 'war', 'Our border has teeth. Step back.', 'Nossa fronteira tem dentes. Recuem.');
       }
     }
   }
@@ -436,6 +486,52 @@ export class SimulationEngine {
     });
   }
 
+  private foundInitialCastles() {
+    this.species.forEach((species, index) => {
+      const members = this.agents.filter((agent) => agent.speciesId === species.id);
+
+      if (members.length === 0) {
+        return;
+      }
+
+      const side = index % 2 === 0 ? 0.38 : 0.62;
+      const position = {
+        x: this.world.width * side,
+        y: this.world.height * (0.36 + (index % 3) * 0.035),
+      };
+      this.foundCastleForSpecies(species, position);
+      this.addLeaderMessage(
+        species.id,
+        null,
+        'rally',
+        `${species.name} gathers at the first castle.`,
+        `${species.name} se reune no primeiro castelo.`,
+      );
+    });
+  }
+
+  private foundCastleForSpecies(species: Species, position: Agent['position']) {
+    if (this.bases.some((base) => base.speciesId === species.id) || this.bases.length >= maxBases) {
+      return;
+    }
+
+    const base: Base = {
+      id: this.nextBaseId++,
+      position: { ...position },
+      speciesId: species.id,
+      radius: 118,
+      population: this.agents.filter((agent) => agent.speciesId === species.id).length,
+      foodStock: 28,
+      threatLevel: 0,
+      buildProgress: 64,
+      expansionLevel: 0,
+      bornDay: this.world.day,
+    };
+
+    this.bases.push(base);
+    this.addVisualEffect('build', position, species.id);
+  }
+
   private tryFoundBases() {
     if (this.bases.length >= maxBases) {
       return;
@@ -452,9 +548,7 @@ export class SimulationEngine {
           agent.speciesId === founder.speciesId &&
           distanceSquared(agent.position, founder.position) < 125 ** 2,
       );
-      const existingBase = this.bases.some(
-        (base) => base.speciesId === founder.speciesId && distanceSquared(base.position, founder.position) < 300 ** 2,
-      );
+      const existingBase = this.bases.some((base) => base.speciesId === founder.speciesId);
 
       if (sameSpeciesNearby.length < 4 || existingBase) {
         return;
@@ -486,7 +580,7 @@ export class SimulationEngine {
 
       if (!this.firstBaseLogged) {
         this.firstBaseLogged = true;
-        this.addTimelineEvent('milestone', 'First shelter founded', `A ${this.getSpeciesLabel(founder.speciesId)} cluster built a crude base.`);
+        this.addTimelineEvent('milestone', 'First castle founded', `${this.getSpeciesLabel(founder.speciesId)} raised a single castle for its territory.`);
       }
     });
   }
@@ -680,6 +774,13 @@ export class SimulationEngine {
     return nearest;
   }
 
+  private findSpeciesLeader(speciesId: string): Agent | null {
+    const leaderId = this.species.find((species) => species.id === speciesId)?.leaderId;
+    const leader = leaderId ? this.agents.find((agent) => agent.id === leaderId && agent.energy > 0) : null;
+
+    return leader ?? this.agents.find((agent) => agent.speciesId === speciesId && agent.isLeader && agent.energy > 0) ?? null;
+  }
+
   private countNearbyAgents(agent: Agent, allies: boolean, radius: number) {
     const radiusSquared = radius ** 2;
     let count = 0;
@@ -735,6 +836,7 @@ export class SimulationEngine {
       if (!this.firstRallyLogged) {
         this.firstRallyLogged = true;
         this.addTimelineEvent('milestone', 'First rally', `${this.getSpeciesLabel(agent.speciesId)} agents started grouping against a larger force.`);
+        this.addLeaderMessage(agent.speciesId, enemy.speciesId, 'rally', 'Gather close. We survive as one body.', 'Juntem-se. Sobrevivemos como um corpo so.');
       }
 
       return base ? 'rally' : 'avoid';
@@ -787,6 +889,7 @@ export class SimulationEngine {
         'First fragile peace',
         `${this.getSpeciesLabel(agent.speciesId)} and ${this.getSpeciesLabel(enemy.speciesId)} paused a conflict instead of escalating it.`,
       );
+      this.addLeaderMessage(agent.speciesId, enemy.speciesId, 'peace', 'We lower our fists for now.', 'Baixamos os punhos por enquanto.');
     }
 
     return true;
@@ -804,7 +907,7 @@ export class SimulationEngine {
       return existing;
     }
 
-    const relation: SpeciesRelation = { tension: 0, truceUntil: 0 };
+    const relation: SpeciesRelation = { tension: 0, truceUntil: 0, lastMessageTick: -9999 };
     this.relations.set(key, relation);
     return relation;
   }
@@ -828,6 +931,80 @@ export class SimulationEngine {
     });
   }
 
+  private resolveLeaderDiplomacy() {
+    this.relations.forEach((relation, key) => {
+      if (this.world.tick - relation.lastMessageTick < dayLength * 2) {
+        return;
+      }
+
+      const [speciesA, speciesB] = key.split(':');
+      const leaderA = this.findSpeciesLeader(speciesA);
+      const leaderB = this.findSpeciesLeader(speciesB);
+
+      if (!leaderA || !leaderB) {
+        return;
+      }
+
+      if (relation.truceUntil > this.world.tick && relation.tension < 8) {
+        relation.lastMessageTick = this.world.tick;
+        this.addLeaderMessage(speciesA, speciesB, 'peace', 'Keep the paths open. Our young need food, not ashes.', 'Mantenham os caminhos abertos. Nossos jovens precisam de comida, nao cinzas.');
+        return;
+      }
+
+      if (relation.tension > 18) {
+        relation.lastMessageTick = this.world.tick;
+        this.addLeaderMessage(speciesA, speciesB, 'war', 'Your steps are too close to our crown.', 'Seus passos estao perto demais da nossa coroa.');
+        return;
+      }
+
+      const baseA = this.bases.find((base) => base.speciesId === speciesA);
+
+      if (baseA && baseA.threatLevel > baseA.population * 0.28) {
+        relation.lastMessageTick = this.world.tick;
+        this.addLeaderMessage(speciesA, speciesB, 'warning', 'Leave the castle line or we answer together.', 'Saiam da linha do castelo ou responderemos juntos.');
+      }
+    });
+  }
+
+  private addLeaderMessage(
+    fromSpeciesId: string,
+    toSpeciesId: string | null,
+    tone: DiplomaticMessageTone,
+    en: string,
+    pt: string,
+  ) {
+    const fromLeader = this.findSpeciesLeader(fromSpeciesId);
+
+    if (!fromLeader && this.agents.length > 0) {
+      return;
+    }
+
+    const recentDuplicate = this.diplomaticMessages.some(
+      (message) =>
+        message.fromSpeciesId === fromSpeciesId &&
+        message.toSpeciesId === toSpeciesId &&
+        message.tone === tone &&
+        this.world.tick - message.tick < dayLength,
+    );
+
+    if (recentDuplicate) {
+      return;
+    }
+
+    this.diplomaticMessages = [
+      {
+        id: this.nextDiplomaticMessageId++,
+        day: this.world.day,
+        tick: this.world.tick,
+        fromSpeciesId,
+        toSpeciesId,
+        tone,
+        text: { en, pt },
+      },
+      ...this.diplomaticMessages,
+    ].slice(0, maxDiplomaticMessages);
+  }
+
   private getSpeciesLabel(speciesId: string) {
     return this.species.find((species) => species.id === speciesId)?.name ?? 'unknown';
   }
@@ -844,12 +1021,18 @@ export class SimulationEngine {
 
     const signature = averageDna(unassignedCandidates.slice(0, 14).map((agent) => agent.dna));
     const newSpecies = this.createSpecies(signature);
+    const leader = unassignedCandidates[0];
 
     unassignedCandidates.slice(0, 18).forEach((agent) => {
       agent.speciesId = newSpecies.id;
+      agent.isLeader = false;
     });
+    leader.isLeader = true;
+    leader.energy = Math.max(leader.energy, 110);
+    newSpecies.leaderId = leader.id;
 
     this.species.push(newSpecies);
+    this.foundCastleForSpecies(newSpecies, leader.position);
     this.addTimelineEvent('species', 'New species detected', `${newSpecies.name} diverged after accumulated mutations.`);
   }
 
@@ -863,6 +1046,7 @@ export class SimulationEngine {
       signature,
       population: 0,
       bornDay: this.world.day,
+      leaderId: null,
     };
   }
 

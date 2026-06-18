@@ -312,7 +312,8 @@ h1 {
 }
 
 .species-list,
-.timeline-list {
+.timeline-list,
+.chat-list {
   display: grid;
   gap: 8px;
 }
@@ -384,6 +385,102 @@ h1 {
   display: block;
   margin: 4px 0;
   font-size: 0.9rem;
+}
+
+.diplomacy-chat {
+  padding-bottom: 14px;
+}
+
+.language-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, 34px);
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.language-toggle button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+
+.language-toggle button.is-active {
+  color: #07100d;
+  background: var(--accent);
+}
+
+.chat-list {
+  max-height: 250px;
+  overflow: auto;
+}
+
+.chat-message {
+  position: relative;
+  min-height: 86px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-left: 3px solid rgba(141, 211, 255, 0.8);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.chat-message[data-tone='war'] {
+  border-left-color: #ff5269;
+}
+
+.chat-message[data-tone='rally'] {
+  border-left-color: #f8d56b;
+}
+
+.chat-message[data-tone='warning'] {
+  border-left-color: #f472b6;
+}
+
+.chat-meta {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.chat-meta strong,
+.chat-meta small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-meta small,
+.chat-day,
+.empty-chat {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.chat-message p {
+  color: rgba(237, 245, 239, 0.9);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.chat-day {
+  display: block;
+  margin-top: 8px;
+  font-weight: 800;
+}
+
+.empty-chat {
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
 }
 
 @media (max-width: 980px) {

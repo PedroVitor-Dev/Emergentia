@@ -1,4 +1,16 @@
-import type { Agent, Dna, Food, SimulationSnapshot, SimulationStats, Species, TimelineEvent, VisualEffect, World } from '../core/types';
+import type {
+  Agent,
+  Base,
+  Dna,
+  Food,
+  LandPatch,
+  SimulationSnapshot,
+  SimulationStats,
+  Species,
+  TimelineEvent,
+  VisualEffect,
+  World,
+} from '../core/types';
 import { clamp, distanceSquared, normalize, randomRange, wrapPosition } from '../core/math';
 import { averageDna, blendDna, dnaDistance } from '../genetics/dna';
 import { createAgent, createFood, createInitialSpecies, createWorld } from './createWorld';
@@ -14,15 +26,21 @@ const maxVisualEffects = 96;
 const visualEffectLifetime = 96;
 const collisionRadius = 26;
 const combatRadius = 42;
+const maxBases = 8;
+const maxLandPatches = 28;
 
 export class SimulationEngine {
   private world: World;
   private agents: Agent[];
   private food: Food[];
+  private bases: Base[] = [];
+  private landPatches: LandPatch[] = [];
   private species: Species[];
   private timeline: TimelineEvent[];
   private nextAgentId = 1;
   private nextFoodId = 1;
+  private nextBaseId = 1;
+  private nextLandPatchId = 1;
   private nextTimelineId = 1;
   private nextVisualEffectId = 1;
   private births = initialAgents;
@@ -31,6 +49,8 @@ export class SimulationEngine {
   private firstDeathLogged = false;
   private firstReproductionLogged = false;
   private firstCombatLogged = false;
+  private firstBaseLogged = false;
+  private firstExpansionLogged = false;
   private visualEffects: VisualEffect[] = [];
 
   constructor() {
@@ -65,10 +85,14 @@ export class SimulationEngine {
     this.world = fresh.world;
     this.agents = fresh.agents;
     this.food = fresh.food;
+    this.bases = fresh.bases;
+    this.landPatches = fresh.landPatches;
     this.species = fresh.species;
     this.timeline = fresh.timeline;
     this.nextAgentId = fresh.nextAgentId;
     this.nextFoodId = fresh.nextFoodId;
+    this.nextBaseId = fresh.nextBaseId;
+    this.nextLandPatchId = fresh.nextLandPatchId;
     this.nextTimelineId = fresh.nextTimelineId;
     this.nextVisualEffectId = fresh.nextVisualEffectId;
     this.births = fresh.births;
@@ -77,6 +101,8 @@ export class SimulationEngine {
     this.firstDeathLogged = false;
     this.firstReproductionLogged = false;
     this.firstCombatLogged = false;
+    this.firstBaseLogged = false;
+    this.firstExpansionLogged = false;
     this.visualEffects = fresh.visualEffects;
   }
 
@@ -95,6 +121,7 @@ export class SimulationEngine {
       this.resolveCollisions();
       this.resolveEating();
       this.resolveCombat();
+      this.resolveBases();
       this.resolveReproduction();
       this.resolveMortality();
       this.pruneVisualEffects();
@@ -107,6 +134,8 @@ export class SimulationEngine {
       world: { ...this.world },
       agents: this.agents.map((agent) => ({ ...agent, position: { ...agent.position }, velocity: { ...agent.velocity } })),
       food: this.food.map((item) => ({ ...item, position: { ...item.position } })),
+      bases: this.bases.map((base) => ({ ...base, position: { ...base.position } })),
+      landPatches: this.landPatches.map((patch) => ({ ...patch, position: { ...patch.position } })),
       species: this.species.map((item) => ({ ...item, signature: { ...item.signature } })),
       visualEffects: this.visualEffects.map((effect) => ({ ...effect, position: { ...effect.position } })),
       stats: this.getStats(),
@@ -121,9 +150,11 @@ export class SimulationEngine {
       const nearestFood = this.findNearestFood(agent);
       const nearestAlly = this.findNearestAlly(agent);
       const nearestEnemy = this.findNearestEnemy(agent);
+      const nearestBase = this.findNearestBase(agent);
       const hunger = clamp((86 - agent.energy) / 86);
       const curiosity = agent.dna.curiosity - 0.5;
       const socialPull = nearestAlly && agent.energy > 34 ? agent.dna.social * 0.34 : 0;
+      const basePull = nearestBase && (agent.energy < 44 || agent.dna.social > 0.68) ? agent.dna.social * 0.46 : 0;
       const enemyPull = nearestEnemy && agent.energy > 38 ? Math.max(0, agent.dna.aggression - 0.24) * 0.72 : 0;
       const foodPull = nearestFood ? hunger * (0.82 + agent.dna.vision) : 0;
       const wander = {
@@ -147,9 +178,15 @@ export class SimulationEngine {
             y: nearestEnemy.position.y - agent.position.y,
           })
         : { x: 0, y: 0 };
+      const toBase = nearestBase
+        ? normalize({
+            x: nearestBase.position.x - agent.position.x,
+            y: nearestBase.position.y - agent.position.y,
+          })
+        : { x: 0, y: 0 };
       const direction = normalize({
-        x: toFood.x * foodPull + toAlly.x * socialPull + toEnemy.x * enemyPull + wander.x,
-        y: toFood.y * foodPull + toAlly.y * socialPull + toEnemy.y * enemyPull + wander.y,
+        x: toFood.x * foodPull + toAlly.x * socialPull + toEnemy.x * enemyPull + toBase.x * basePull + wander.x,
+        y: toFood.y * foodPull + toAlly.y * socialPull + toEnemy.y * enemyPull + toBase.y * basePull + wander.y,
       });
       const speed = 0.48 + agent.dna.speed * 1.18;
 
@@ -325,6 +362,130 @@ export class SimulationEngine {
     }
   }
 
+  private resolveBases() {
+    this.tryFoundBases();
+    this.updateBases();
+  }
+
+  private tryFoundBases() {
+    if (this.bases.length >= maxBases) {
+      return;
+    }
+
+    this.agents.forEach((founder) => {
+      if (this.bases.length >= maxBases || founder.energy < 68 || founder.age < 8 || founder.dna.social < 0.58) {
+        return;
+      }
+
+      const sameSpeciesNearby = this.agents.filter(
+        (agent) =>
+          agent.id !== founder.id &&
+          agent.speciesId === founder.speciesId &&
+          distanceSquared(agent.position, founder.position) < 125 ** 2,
+      );
+      const existingBase = this.bases.some(
+        (base) => base.speciesId === founder.speciesId && distanceSquared(base.position, founder.position) < 300 ** 2,
+      );
+
+      if (sameSpeciesNearby.length < 4 || existingBase) {
+        return;
+      }
+
+      const cluster = [founder, ...sameSpeciesNearby.slice(0, 10)];
+      const position = {
+        x: cluster.reduce((sum, agent) => sum + agent.position.x, 0) / cluster.length,
+        y: cluster.reduce((sum, agent) => sum + agent.position.y, 0) / cluster.length,
+      };
+      const base: Base = {
+        id: this.nextBaseId++,
+        position,
+        speciesId: founder.speciesId,
+        radius: 92,
+        population: cluster.length,
+        buildProgress: 22,
+        expansionLevel: 0,
+        bornDay: this.world.day,
+      };
+
+      this.bases.push(base);
+      cluster.forEach((agent) => {
+        agent.energy = Math.max(18, agent.energy - 5);
+      });
+      this.addVisualEffect('build', position, founder.speciesId);
+
+      if (!this.firstBaseLogged) {
+        this.firstBaseLogged = true;
+        this.addTimelineEvent('milestone', 'First shelter founded', `A ${this.getSpeciesLabel(founder.speciesId)} cluster built a crude base.`);
+      }
+    });
+  }
+
+  private updateBases() {
+    this.bases.forEach((base) => {
+      const workers = this.agents.filter(
+        (agent) => agent.speciesId === base.speciesId && distanceSquared(agent.position, base.position) < (base.radius + 56) ** 2,
+      );
+
+      base.population = workers.length;
+
+      if (workers.length < 3) {
+        base.buildProgress = Math.max(0, base.buildProgress - 0.015);
+        return;
+      }
+
+      const socialPower = workers.reduce((sum, agent) => sum + agent.dna.social, 0) / workers.length;
+      base.buildProgress += workers.length * socialPower * 0.055;
+
+      if (this.world.tick % 18 === 0) {
+        this.addVisualEffect('build', base.position, base.speciesId);
+      }
+
+      if (base.buildProgress < 70 || this.landPatches.length >= maxLandPatches) {
+        return;
+      }
+
+      base.buildProgress = 0;
+      base.expansionLevel += 1;
+      base.radius = Math.min(180, base.radius + 9);
+      this.expandLand(base);
+    });
+  }
+
+  private expandLand(base: Base) {
+    const angle = base.expansionLevel * 2.399 + (base.speciesId === 'species-0' ? 0.4 : -0.4);
+    const distance = 120 + base.expansionLevel * 32;
+    const position = {
+      x: clamp(base.position.x + Math.cos(angle) * distance, 80, this.world.width - 80),
+      y: clamp(base.position.y + Math.sin(angle) * distance, 80, this.world.height - 80),
+    };
+    const patch: LandPatch = {
+      id: this.nextLandPatchId++,
+      position,
+      radius: randomRange(64, 112),
+      speciesId: base.speciesId,
+      createdTick: this.world.tick,
+    };
+
+    this.landPatches.push(patch);
+    this.addVisualEffect('build', position, base.speciesId);
+
+    for (let index = 0; index < 18; index += 1) {
+      this.food.push({
+        id: this.nextFoodId++,
+        position: {
+          x: clamp(position.x + randomRange(-patch.radius, patch.radius), 0, this.world.width),
+          y: clamp(position.y + randomRange(-patch.radius, patch.radius), 0, this.world.height),
+        },
+        energy: randomRange(14, 26),
+      });
+    }
+
+    if (!this.firstExpansionLogged) {
+      this.firstExpansionLogged = true;
+      this.addTimelineEvent('milestone', 'Land expanded', `${this.getSpeciesLabel(base.speciesId)} workers raised new ground around their base.`);
+    }
+  }
+
   private resolveMortality() {
     const before = this.agents.length;
     this.agents = this.agents.filter((agent) => {
@@ -411,6 +572,30 @@ export class SimulationEngine {
     });
 
     return nearest;
+  }
+
+  private findNearestBase(agent: Agent): Base | null {
+    let nearest: Base | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    this.bases.forEach((base) => {
+      if (base.speciesId !== agent.speciesId) {
+        return;
+      }
+
+      const distance = distanceSquared(agent.position, base.position);
+
+      if (distance < nearestDistance && distance < 420 ** 2) {
+        nearest = base;
+        nearestDistance = distance;
+      }
+    });
+
+    return nearest;
+  }
+
+  private getSpeciesLabel(speciesId: string) {
+    return this.species.find((species) => species.id === speciesId)?.name ?? 'unknown';
   }
 
   private detectSpecies() {

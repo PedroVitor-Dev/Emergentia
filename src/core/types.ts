@@ -43,6 +43,25 @@ export type Food = {
   energy: number;
 };
 
+export type Base = {
+  id: number;
+  position: Vector2;
+  speciesId: string;
+  radius: number;
+  population: number;
+  buildProgress: number;
+  expansionLevel: number;
+  bornDay: number;
+};
+
+export type LandPatch = {
+  id: number;
+  position: Vector2;
+  radius: number;
+  speciesId: string;
+  createdTick: number;
+};
+
 export type World = {
   width: number;
   height: number;
@@ -68,7 +87,7 @@ export type TimelineEvent = {
   detail: string;
 };
 
-export type VisualEffectType = 'birth' | 'eat' | 'death' | 'combat';
+export type VisualEffectType = 'birth' | 'eat' | 'death' | 'combat' | 'build';
 
 export type VisualEffect = {
   id: number;
@@ -94,6 +113,8 @@ export type SimulationSnapshot = {
   world: World;
   agents: Agent[];
   food: Food[];
+  bases: Base[];
+  landPatches: LandPatch[];
   species: Species[];
   visualEffects: VisualEffect[];
   stats: SimulationStats;

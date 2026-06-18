@@ -145,6 +145,32 @@ h1 {
     background 160ms ease;
 }
 
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, 36px);
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.segment-button {
+  display: grid;
+  width: 36px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  background: transparent;
+}
+
+.segment-button.is-active {
+  color: #07100d;
+  background: var(--accent);
+}
+
 .icon-button:hover {
   transform: translateY(-1px);
   border-color: rgba(134, 239, 172, 0.6);

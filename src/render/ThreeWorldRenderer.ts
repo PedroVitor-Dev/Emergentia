@@ -9,6 +9,11 @@ const cameraMinHeight = 32;
 const cameraMaxHeight = 260;
 const cameraCreatureRadius = 38;
 const cameraViewDistance = 620;
+const mapMinZoom = 0.55;
+const mapMaxZoom = 3.6;
+const mapViewDistance = 1100;
+
+export type CameraMode = 'spectator' | 'map';
 
 type CreatureRig = {
   root: THREE.Group;
@@ -33,8 +38,10 @@ export class ThreeWorldRenderer {
   private readonly container: HTMLElement;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
-  private readonly camera = new THREE.PerspectiveCamera(58, 1, 2, 2600);
-  private readonly cameraPosition = new THREE.Vector3(0, 95, 440);
+  private readonly camera = new THREE.PerspectiveCamera(58, 1, 2, 2800);
+  private readonly mapCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 3600);
+  private readonly spectatorPosition = new THREE.Vector3(0, 95, 440);
+  private readonly mapTarget = new THREE.Vector3(0, 0, 0);
   private readonly foodMesh: THREE.InstancedMesh;
   private readonly creaturePool: CreatureRig[] = [];
   private readonly effectPool: EffectRig[] = [];
@@ -50,6 +57,8 @@ export class ThreeWorldRenderer {
   };
   private yaw = 0;
   private pitch = -0.36;
+  private cameraMode: CameraMode = 'spectator';
+  private mapZoom = 1.05;
   private width = 1;
   private height = 1;
   private lastNavigationTime = performance.now();
@@ -86,14 +95,25 @@ export class ThreeWorldRenderer {
 
   render(snapshot: SimulationSnapshot) {
     this.updateKeyboardNavigation(snapshot.world);
-    this.keepCameraAwayFromAgents(snapshot);
-    this.clampCameraToWorld(snapshot.world);
-    this.updateCamera();
+
+    if (this.cameraMode === 'spectator') {
+      this.keepCameraAwayFromAgents(snapshot);
+      this.clampSpectatorToWorld(snapshot.world);
+    } else {
+      this.clampMapToWorld(snapshot.world);
+    }
+
+    const activeCamera = this.updateCamera();
     this.updateFood(snapshot);
     this.updateCreatures(snapshot);
     this.updateEffects(snapshot);
     this.animateWorld(snapshot.world.tick);
-    this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, activeCamera);
+  }
+
+  setCameraMode(mode: CameraMode) {
+    this.cameraMode = mode;
+    this.pointer.active = false;
   }
 
   dispose() {
@@ -117,13 +137,29 @@ export class ThreeWorldRenderer {
   }
 
   private updateCamera() {
+    if (this.cameraMode === 'map') {
+      const aspect = this.width / this.height;
+      const halfHeight = 720 / this.mapZoom / 2;
+      const halfWidth = halfHeight * aspect;
+
+      this.mapCamera.left = -halfWidth;
+      this.mapCamera.right = halfWidth;
+      this.mapCamera.top = halfHeight;
+      this.mapCamera.bottom = -halfHeight;
+      this.mapCamera.position.set(this.mapTarget.x, 920 / this.mapZoom, this.mapTarget.z + 80);
+      this.mapCamera.lookAt(this.mapTarget);
+      this.mapCamera.updateProjectionMatrix();
+      return this.mapCamera;
+    }
+
     this.camera.aspect = this.width / this.height;
-    this.camera.position.copy(this.cameraPosition);
+    this.camera.position.copy(this.spectatorPosition);
     this.camera.rotation.order = 'YXZ';
     this.camera.rotation.y = this.yaw;
     this.camera.rotation.x = this.pitch;
     this.camera.rotation.z = 0;
     this.camera.updateProjectionMatrix();
+    return this.camera;
   }
 
   private attachNavigation() {
@@ -149,10 +185,17 @@ export class ThreeWorldRenderer {
 
     const dx = event.clientX - this.pointer.lastX;
     const dy = event.clientY - this.pointer.lastY;
-    const lookSensitivity = 0.0032;
 
-    this.yaw -= dx * lookSensitivity;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * lookSensitivity, -1.12, -0.08);
+    if (this.cameraMode === 'map') {
+      const panSpeed = 1.6 / this.mapZoom;
+      this.mapTarget.x -= dx * panSpeed;
+      this.mapTarget.z -= dy * panSpeed;
+    } else {
+      const lookSensitivity = 0.0032;
+      this.yaw -= dx * lookSensitivity;
+      this.pitch = THREE.MathUtils.clamp(this.pitch - dy * lookSensitivity, -1.12, -0.08);
+    }
+
     this.pointer.lastX = event.clientX;
     this.pointer.lastY = event.clientY;
   };
@@ -164,7 +207,13 @@ export class ThreeWorldRenderer {
   private handleWheel = (event: WheelEvent) => {
     event.preventDefault();
     const direction = event.deltaY > 0 ? 1 : -1;
-    this.cameraPosition.y = THREE.MathUtils.clamp(this.cameraPosition.y + direction * 12, cameraMinHeight, cameraMaxHeight);
+
+    if (this.cameraMode === 'map') {
+      this.mapZoom = THREE.MathUtils.clamp(this.mapZoom + -direction * 0.16 * this.mapZoom, mapMinZoom, mapMaxZoom);
+      return;
+    }
+
+    this.spectatorPosition.y = THREE.MathUtils.clamp(this.spectatorPosition.y + direction * 12, cameraMinHeight, cameraMaxHeight);
   };
 
   private handleKeyDown = (event: KeyboardEvent) => {
@@ -193,8 +242,27 @@ export class ThreeWorldRenderer {
       return;
     }
 
-    const direction = new THREE.Vector3(0, 0, 0);
+    if (this.cameraMode === 'map') {
+      const direction = new THREE.Vector2(0, 0);
 
+      if (this.pressedKeys.has('w')) direction.y -= 1;
+      if (this.pressedKeys.has('s')) direction.y += 1;
+      if (this.pressedKeys.has('a')) direction.x -= 1;
+      if (this.pressedKeys.has('d')) direction.x += 1;
+
+      if (direction.lengthSq() === 0) {
+        return;
+      }
+
+      direction.normalize();
+      const movement = (520 * deltaSeconds) / this.mapZoom;
+      this.mapTarget.x += direction.x * movement;
+      this.mapTarget.z += direction.y * movement;
+      this.clampMapToWorld(world);
+      return;
+    }
+
+    const direction = new THREE.Vector3(0, 0, 0);
     const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
 
@@ -208,25 +276,38 @@ export class ThreeWorldRenderer {
     }
 
     direction.normalize();
-    const heightScale = THREE.MathUtils.clamp(this.cameraPosition.y / 110, 0.72, 1.9);
+    const heightScale = THREE.MathUtils.clamp(this.spectatorPosition.y / 110, 0.72, 1.9);
     const movement = cameraMoveSpeed * heightScale * deltaSeconds;
-    this.cameraPosition.addScaledVector(direction, movement);
-    this.clampCameraToWorld(world);
+    this.spectatorPosition.addScaledVector(direction, movement);
+    this.clampSpectatorToWorld(world);
   }
 
-  private clampCameraToWorld(world: World) {
+  private clampSpectatorToWorld(world: World) {
     const worldHalfWidth = (world.width * worldScale) / 2;
     const worldHalfHeight = (world.height * worldScale) / 2;
     const horizontalLimit = worldHalfWidth * 0.88;
     const verticalLimit = worldHalfHeight * 0.88;
 
-    this.cameraPosition.x = THREE.MathUtils.clamp(this.cameraPosition.x, -horizontalLimit, horizontalLimit);
-    this.cameraPosition.z = THREE.MathUtils.clamp(this.cameraPosition.z, -verticalLimit, verticalLimit);
-    this.cameraPosition.y = THREE.MathUtils.clamp(this.cameraPosition.y, cameraMinHeight, cameraMaxHeight);
+    this.spectatorPosition.x = THREE.MathUtils.clamp(this.spectatorPosition.x, -horizontalLimit, horizontalLimit);
+    this.spectatorPosition.z = THREE.MathUtils.clamp(this.spectatorPosition.z, -verticalLimit, verticalLimit);
+    this.spectatorPosition.y = THREE.MathUtils.clamp(this.spectatorPosition.y, cameraMinHeight, cameraMaxHeight);
+  }
+
+  private clampMapToWorld(world: World) {
+    const worldHalfWidth = (world.width * worldScale) / 2;
+    const worldHalfHeight = (world.height * worldScale) / 2;
+    const aspect = this.width / this.height;
+    const halfViewHeight = 720 / this.mapZoom / 2;
+    const halfViewWidth = halfViewHeight * aspect;
+    const horizontalLimit = Math.max(0, worldHalfWidth - halfViewWidth * 0.45);
+    const verticalLimit = Math.max(0, worldHalfHeight - halfViewHeight * 0.45);
+
+    this.mapTarget.x = THREE.MathUtils.clamp(this.mapTarget.x, -horizontalLimit, horizontalLimit);
+    this.mapTarget.z = THREE.MathUtils.clamp(this.mapTarget.z, -verticalLimit, verticalLimit);
   }
 
   private keepCameraAwayFromAgents(snapshot: SimulationSnapshot) {
-    const camera2D = new THREE.Vector2(this.cameraPosition.x, this.cameraPosition.z);
+    const camera2D = new THREE.Vector2(this.spectatorPosition.x, this.spectatorPosition.z);
 
     snapshot.agents.forEach((agent) => {
       const position = this.toScenePosition(agent.position.x, agent.position.y, snapshot.world);
@@ -238,9 +319,9 @@ export class ThreeWorldRenderer {
       }
 
       const push = camera2D.sub(agent2D).normalize().multiplyScalar(cameraCreatureRadius - distance);
-      this.cameraPosition.x += push.x;
-      this.cameraPosition.z += push.y;
-      camera2D.set(this.cameraPosition.x, this.cameraPosition.z);
+      this.spectatorPosition.x += push.x;
+      this.spectatorPosition.z += push.y;
+      camera2D.set(this.spectatorPosition.x, this.spectatorPosition.z);
     });
   }
 
@@ -619,9 +700,11 @@ export class ThreeWorldRenderer {
 
   private isVisible(x: number, y: number, world: World, margin: number) {
     const position = this.toScenePosition(x, y, world);
-    const distance = Math.hypot(position.x - this.cameraPosition.x, position.z - this.cameraPosition.z);
+    const origin = this.cameraMode === 'map' ? this.mapTarget : this.spectatorPosition;
+    const distance = Math.hypot(position.x - origin.x, position.z - origin.z);
+    const viewDistance = this.cameraMode === 'map' ? mapViewDistance / this.mapZoom : cameraViewDistance;
 
-    return distance <= cameraViewDistance + margin;
+    return distance <= viewDistance + margin;
   }
 
   private toScenePosition(x: number, y: number, world: World) {

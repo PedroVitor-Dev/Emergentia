@@ -1,7 +1,7 @@
-import { Activity, Pause, Play, RotateCcw, Sparkles } from 'lucide-react';
+import { Activity, Camera, Map, Pause, Play, RotateCcw, Sparkles } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SimulationSnapshot } from '../core/types';
-import { ThreeWorldRenderer } from '../render/ThreeWorldRenderer';
+import { CameraMode, ThreeWorldRenderer } from '../render/ThreeWorldRenderer';
 import { SimulationEngine } from '../simulation/SimulationEngine';
 import { MetricCard } from './MetricCard';
 import { SpeciesList } from './SpeciesList';
@@ -17,6 +17,7 @@ export const App = () => {
   const snapshotRef = useRef<SimulationSnapshot>(engineRef.current.getSnapshot());
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState(1);
+  const [cameraMode, setCameraMode] = useState<CameraMode>('spectator');
   const [snapshot, setSnapshot] = useState<SimulationSnapshot>(() => snapshotRef.current);
 
   useEffect(() => {
@@ -35,6 +36,10 @@ export const App = () => {
       rendererRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    rendererRef.current?.setCameraMode(cameraMode);
+  }, [cameraMode]);
 
   useEffect(() => {
     let animationFrame = 0;
@@ -95,9 +100,31 @@ export const App = () => {
           <div>
             <span className="eyebrow">Artificial Life Laboratory</span>
             <h1>Emergentia</h1>
-            <span className="viewport-hint">WASD to walk. Drag to look. Wheel changes height.</span>
+            <span className="viewport-hint">
+              {cameraMode === 'map' ? 'WASD or drag to pan. Wheel zooms.' : 'WASD to walk. Drag to look. Wheel changes height.'}
+            </span>
           </div>
           <div className="control-strip" aria-label="Simulation controls">
+            <div className="segmented-control" aria-label="Camera mode">
+              <button
+                className={cameraMode === 'spectator' ? 'segment-button is-active' : 'segment-button'}
+                type="button"
+                onClick={() => setCameraMode('spectator')}
+                aria-label="Spectator camera"
+                title="Spectator camera"
+              >
+                <Camera size={16} />
+              </button>
+              <button
+                className={cameraMode === 'map' ? 'segment-button is-active' : 'segment-button'}
+                type="button"
+                onClick={() => setCameraMode('map')}
+                aria-label="Map camera"
+                title="Map camera"
+              >
+                <Map size={16} />
+              </button>
+            </div>
             <button
               className="icon-button"
               type="button"

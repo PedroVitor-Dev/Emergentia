@@ -8,6 +8,8 @@ const initialAgents = 50;
 const initialFood = 280;
 const dayLength = 58;
 const maxTimelineEvents = 24;
+const softPopulationLimit = 180;
+const maxBirthsPerStep = 6;
 
 export class SimulationEngine {
   private world: World;
@@ -160,11 +162,15 @@ export class SimulationEngine {
   }
 
   private resolveReproduction() {
+    if (this.agents.length >= softPopulationLimit) {
+      return;
+    }
+
     const children: Agent[] = [];
     const readyAgents = this.agents.filter((agent) => agent.energy > 82 && agent.age > 20 && agent.reproductionCooldown === 0);
 
     readyAgents.forEach((parentA) => {
-      if (parentA.energy < 82 || children.length > 24) {
+      if (parentA.energy < 82 || children.length >= maxBirthsPerStep || this.agents.length + children.length >= softPopulationLimit) {
         return;
       }
 

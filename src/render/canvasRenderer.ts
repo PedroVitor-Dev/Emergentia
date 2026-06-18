@@ -7,7 +7,7 @@ export const renderSimulation = (canvas: HTMLCanvasElement, snapshot: Simulation
     return;
   }
 
-  const ratio = window.devicePixelRatio || 1;
+  const ratio = Math.min(window.devicePixelRatio || 1, 1.35);
   const rect = canvas.getBoundingClientRect();
   const width = Math.floor(rect.width * ratio);
   const height = Math.floor(rect.height * ratio);
@@ -26,10 +26,19 @@ export const renderSimulation = (canvas: HTMLCanvasElement, snapshot: Simulation
 
   const scaleX = rect.width / snapshot.world.width;
   const scaleY = rect.height / snapshot.world.height;
+  const speciesColors = new Map(snapshot.species.map((item) => [item.id, item.color]));
+  const detailedCreatureLimit = 120;
 
-  snapshot.agents.forEach((agent) => {
-    const species = snapshot.species.find((item) => item.id === agent.speciesId);
-    drawCreature(context, agent, species?.color ?? '#ffffff', agent.position.x * scaleX, agent.position.y * scaleY, snapshot.world.tick);
+  snapshot.agents.forEach((agent, index) => {
+    const color = speciesColors.get(agent.speciesId) ?? '#ffffff';
+    const x = agent.position.x * scaleX;
+    const y = agent.position.y * scaleY;
+
+    if (index < detailedCreatureLimit) {
+      drawCreature(context, agent, color, x, y, snapshot.world.tick);
+    } else {
+      drawTinyCreature(context, agent, color, x, y, snapshot.world.tick);
+    }
   });
 
   context.restore();
@@ -131,11 +140,8 @@ const drawResourceField = (context: CanvasRenderingContext2D, snapshot: Simulati
 
     context.beginPath();
     context.fillStyle = 'rgba(144, 246, 177, 0.66)';
-    context.shadowColor = 'rgba(144, 246, 177, 0.75)';
-    context.shadowBlur = 9;
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.fill();
-    context.shadowBlur = 0;
   });
 };
 
@@ -162,9 +168,11 @@ const drawCreature = (
   context.rotate(direction * 0.18);
   context.translate(0, Math.sin(tick * 0.035 + agent.id) * 1.4);
 
-  context.shadowColor = 'rgba(0, 0, 0, 0.5)';
-  context.shadowBlur = 10;
-  context.shadowOffsetY = 5;
+  context.beginPath();
+  context.fillStyle = 'rgba(0, 0, 0, 0.26)';
+  context.ellipse(0, bodyHeight * 0.58, bodyWidth * 0.55, bodyHeight * 0.13, 0, 0, Math.PI * 2);
+  context.fill();
+
   drawLimb(context, -bodyWidth * 0.56, -bodyHeight * 0.1, -bodyWidth * 0.9, gait, bodyHeight, darkColor, outline);
   drawLimb(context, bodyWidth * 0.55, -bodyHeight * 0.02, bodyWidth * 0.88, -gait, bodyHeight, darkColor, outline);
   drawLeg(context, -bodyWidth * 0.25, bodyHeight * 0.42, gait, bodyHeight, darkColor, outline);
@@ -173,6 +181,44 @@ const drawCreature = (
   drawRoundedBody(context, bodyWidth, bodyHeight, lean, color, darkColor, outline);
   drawFace(context, bodyWidth, bodyHeight, agent, tick, outline);
   drawBodyMarks(context, bodyWidth, bodyHeight, agent, lightColor, darkColor);
+
+  context.restore();
+};
+
+const drawTinyCreature = (
+  context: CanvasRenderingContext2D,
+  agent: Agent,
+  color: string,
+  x: number,
+  y: number,
+  tick: number,
+) => {
+  const width = 10 + agent.dna.social * 4;
+  const height = 11 + agent.dna.fertility * 4;
+  const bob = Math.sin(tick * 0.035 + agent.id) * 0.8;
+
+  context.save();
+  context.translate(x, y + bob);
+  context.rotate(Math.atan2(agent.velocity.y, agent.velocity.x || 0.001) * 0.15);
+
+  context.beginPath();
+  context.fillStyle = 'rgba(0, 0, 0, 0.24)';
+  context.ellipse(0, height * 0.58, width * 0.55, height * 0.14, 0, 0, Math.PI * 2);
+  context.fill();
+
+  context.beginPath();
+  context.fillStyle = color;
+  context.strokeStyle = '#030504';
+  context.lineWidth = 2;
+  context.roundRect(-width / 2, -height / 2, width, height, 4);
+  context.fill();
+  context.stroke();
+
+  context.beginPath();
+  context.fillStyle = '#030504';
+  context.ellipse(-width * 0.18, -height * 0.12, 1.8, 2.5, -0.2, 0, Math.PI * 2);
+  context.ellipse(width * 0.18, -height * 0.12, 1.8, 2.5, 0.2, 0, Math.PI * 2);
+  context.fill();
 
   context.restore();
 };

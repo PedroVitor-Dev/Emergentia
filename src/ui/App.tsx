@@ -7,34 +7,47 @@ import { MetricCard } from './MetricCard';
 import { SpeciesList } from './SpeciesList';
 import { Timeline } from './Timeline';
 
+const renderFrameMs = 1000 / 30;
+const dashboardFrameMs = 250;
+
 export const App = () => {
   const engineRef = useRef(new SimulationEngine());
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const snapshotRef = useRef<SimulationSnapshot>(engineRef.current.getSnapshot());
   const [isRunning, setIsRunning] = useState(true);
   const [speed, setSpeed] = useState(1);
-  const [snapshot, setSnapshot] = useState<SimulationSnapshot>(() => engineRef.current.getSnapshot());
+  const [snapshot, setSnapshot] = useState<SimulationSnapshot>(() => snapshotRef.current);
 
   useEffect(() => {
-    let frame = 0;
     let animationFrame = 0;
+    let lastRenderTime = 0;
+    let lastDashboardTime = 0;
 
-    const animate = () => {
+    const animate = (time: number) => {
+      if (time - lastRenderTime < renderFrameMs) {
+        animationFrame = window.requestAnimationFrame(animate);
+        return;
+      }
+
+      lastRenderTime = time;
+
       if (isRunning) {
         engineRef.current.step(speed);
       }
 
       const nextSnapshot = engineRef.current.getSnapshot();
+      snapshotRef.current = nextSnapshot;
       const canvas = canvasRef.current;
 
       if (canvas) {
         renderSimulation(canvas, nextSnapshot);
       }
 
-      if (frame % 4 === 0) {
+      if (time - lastDashboardTime >= dashboardFrameMs) {
+        lastDashboardTime = time;
         setSnapshot(nextSnapshot);
       }
 
-      frame += 1;
       animationFrame = window.requestAnimationFrame(animate);
     };
 
@@ -53,7 +66,9 @@ export const App = () => {
 
   const resetSimulation = () => {
     engineRef.current.reset();
-    setSnapshot(engineRef.current.getSnapshot());
+    const nextSnapshot = engineRef.current.getSnapshot();
+    snapshotRef.current = nextSnapshot;
+    setSnapshot(nextSnapshot);
     setIsRunning(true);
   };
 
